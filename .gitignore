@@ -1,0 +1,18 @@
+# Build Results
+[Bb]in/
+[Oo]bj/
+*.obj
+*.exe
+*.pdb
+*.ipch
+*.log
+*.vcxproj.user
+*.tlog/
+*.log
+*.sdf
+*.opensdf
+
+# VS Code and IDE stuff
+.vscode/
+*.VC.db
+*.VC.opendb
