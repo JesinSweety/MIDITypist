@@ -708,6 +708,81 @@
       stroke-linecap: round;
       stroke-linejoin: round;
     }
+
+    /* ── HUD Palette ── */
+    #hudOverlay {
+      display: none;
+      position: fixed;
+      inset: 80px;
+      background: rgba(10, 10, 12, 0.85);
+      backdrop-filter: blur(40px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 32px;
+      z-index: 300;
+      padding: 40px;
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.8);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      animation: hudFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #hudOverlay.active {
+      display: flex;
+    }
+
+    @keyframes hudFadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.95) translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    .hud-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 20px;
+      width: 100%;
+      max-width: 1000px;
+    }
+
+    .hud-item {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+
+    .hud-item.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      transform: scale(1.05);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    .hud-key-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .hud-action-label {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
   </style>
 </head>
 
@@ -902,6 +977,18 @@
     </div>
   </div>
 
+  <!-- HUD Overlay -->
+  <div id="hudOverlay">
+    <div style="margin-bottom: 40px; text-align: center;">
+      <h2 style="font-size: 14px; text-transform: uppercase; letter-spacing: 2px; color: var(--accent);">Active Palette
+      </h2>
+      <h1 id="hudTitle" style="font-size: 32px; font-weight: 800; margin-top: 8px;">Default Layer</h1>
+    </div>
+    <div id="hudGrid" class="hud-grid">
+      <!-- Mapped actions will appear here -->
+    </div>
+  </div>
+
   <!-- Learning Overlay -->
   <div id="learnOverlay" class="learn-overlay">
     <div id="learnPrompt" class="learn-prompt">Press a MIDI note or CC...</div>
@@ -956,6 +1043,34 @@
       overlay.classList.toggle('active');
     }
 
+    function toggleHUD(active, title = "Default Layer") {
+      const hud = document.getElementById('hudOverlay');
+      const hudTitle = document.getElementById('hudTitle');
+      hudTitle.innerText = title;
+      if (active) {
+        hud.classList.add('active');
+        populateHUD();
+      } else {
+        hud.classList.remove('active');
+      }
+    }
+
+    function populateHUD() {
+      const grid = document.getElementById('hudGrid');
+      grid.innerHTML = '';
+
+      // Pull mapped items from current state
+      mappings.slice(0, 12).forEach(m => {
+        const item = document.createElement('div');
+        item.className = 'hud-item';
+        item.innerHTML = `
+          <div class="hud-key-label">Note ${m.midi_num}</div>
+          <div class="hud-action-label">${m.key_name}</div>
+        `;
+        grid.appendChild(item);
+      });
+    }
+
     function updateSettings() {
       const autoReconnect = document.getElementById('settingAutoReconnect').checked;
       const appSwitching = document.getElementById('settingAppSwitching').checked;
@@ -967,6 +1082,9 @@
 
     function handleBackendMessage(msg) {
       switch (msg.type) {
+        case 'hud':
+          toggleHUD(msg.active, msg.title);
+          break;
         case 'config':
           if (msg.config) {
             document.getElementById('settingAutoReconnect').checked = msg.config.auto_reconnect;

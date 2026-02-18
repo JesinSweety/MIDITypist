@@ -48,6 +48,9 @@ using json = nlohmann::json;
 #define PIANO_TOTAL_KEYS 128
 #define PIANO_DECAY_TIMER 503
 #define PIANO_DECAY_MS 50
+#define CHORD_TIMER_ID 504
+#define CHORD_THRESHOLD_MS 60 // Window to group notes into a chord
+#define WM_CHORD_SIGNAL (WM_USER + 201)
 
 // ── Global State ──
 HINSTANCE g_hInst;
@@ -63,8 +66,9 @@ std::string g_lastConnectedPortName;
 
 // ── Mapping struct ──
 struct Mapping {
-    int midi_type;      // 0=Note, 1=CC
-    int midi_num;
+    int midi_type;      // 0=Note, 1=CC, 2=Chord, 3=LayerKey
+    int midi_num;       // for Note/CC/LayerKey
+    std::vector<int> midi_chord; // for Chord
     int key_vk;
     int modifiers;      // bitmask: 1=Ctrl, 2=Shift, 4=Alt
     int vel_min;
@@ -98,6 +102,10 @@ int g_pianoCC[128] = { 0 };
 // ── Auto Reconnect & App Switching ──
 bool g_autoReconnect = true;
 bool g_appSwitchingEnabled = true;
+
+// ── Chord Collector ──
+std::vector<int> g_chordBuffer;
+std::mutex g_chordMutex;
 
 // ── Profile Slots for MIDI switching ──
 std::vector<std::wstring> g_profileSlots;
@@ -189,13 +197,15 @@ void SendMappingsToUI() {
             targetDisplay = GetModifierString(m.modifiers) + GetKeyName(m.key_vk);
         }
 
-        arr.push_back({
+        json item = {
             {"midi_type", m.midi_type}, {"midi_num", m.midi_num},
             {"key_vk", m.key_vk}, {"modifiers", m.modifiers},
             {"vel_min", m.vel_min}, {"vel_zone", m.vel_zone},
             {"cc_action", m.cc_action}, {"profile_switch", m.profile_switch},
             {"target_display", WideToUtf8(targetDisplay)}
-        });
+        };
+        if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
+        arr.push_back(item);
     }
     PostToWebView({ {"type", "mappings"}, {"mappings", arr} });
 }
@@ -255,12 +265,14 @@ void SaveMappings(const std::wstring& filename) {
     {
         std::lock_guard<std::mutex> lock(g_mappingsMutex);
         for (const auto& m : g_mappings) {
-            j.push_back({
+            json item = {
                 {"midi_type", m.midi_type}, {"midi_num", m.midi_num},
                 {"key_vk", m.key_vk}, {"modifiers", m.modifiers},
                 {"vel_min", m.vel_min}, {"vel_zone", m.vel_zone},
                 {"cc_action", m.cc_action}, {"profile_switch", m.profile_switch}
-            });
+            };
+            if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
+            j.push_back(item);
         }
     }
     std::ofstream f(filename);
@@ -279,6 +291,9 @@ void LoadMappings(const std::wstring& filename) {
             Mapping m = {};
             m.midi_type = it.value("midi_type", 0);
             m.midi_num = it.value("midi_num", 0);
+            if (it.contains("midi_chord") && it["midi_chord"].is_array()) {
+                m.midi_chord = it["midi_chord"].get<std::vector<int>>();
+            }
             m.key_vk = it.value("key_vk", 0);
             m.modifiers = it.value("modifiers", 0);
             m.vel_min = it.value("vel_min", 1);
@@ -368,15 +383,65 @@ void RestoreFromTray(HWND hwnd) {
 //  MIDI Callback
 // ══════════════════════════════════════════
 
-void midiCallback(double, std::vector<unsigned char>* msg, void*) {
-    if (!msg || msg->empty()) return;
-    int status = msg->at(0) & 0xF0;
-    int number = (msg->size() > 1) ? msg->at(1) : -1;
-    int velocity = (msg->size() > 2) ? msg->at(2) : 0;
+void ProcessMIDIEvent(int type, int number, int velocity);
 
-    bool isNoteOn = (status == 0x90 && velocity > 0);
-    bool isNoteOff = (status == 0x80 || (status == 0x90 && velocity == 0));
-    bool isCC = (status == 0xB0);
+void midiCallback(double, std::vector<unsigned char>* msg, void*) {
+    if (msg->size() < 3) return;
+    int status = (*msg)[0];
+    int number = (*msg)[1];
+    int velocity = (*msg)[2];
+
+    bool isNoteOn = (status & 0xF0) == 0x90 && velocity > 0;
+    bool isNoteOff = (status & 0xF0) == 0x80 || ((status & 0xF0) == 0x90 && velocity == 0);
+    bool isCC = (status & 0xF0) == 0xB0;
+
+    // Chord grouping logic for Note On
+    if (isNoteOn) {
+        std::lock_guard<std::mutex> lock(g_chordMutex);
+        g_chordBuffer.push_back(number);
+        // Signal main thread to reset/start the chord timer
+        PostMessage(g_hwndMain, WM_CHORD_SIGNAL, 0, 0);
+    }
+    
+    // Process Note Off and CC immediately
+    if (isNoteOff || isCC) {
+        ProcessMIDIEvent(status & 0xF0, number, velocity);
+    }
+}
+
+void ProcessChord(const std::vector<int>& chord) {
+    if (chord.empty()) return;
+
+    std::vector<int> sortedChord = chord;
+    std::sort(sortedChord.begin(), sortedChord.end());
+    
+    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    bool found = false;
+
+    // 1. Try to find a specific chord mapping
+    if (sortedChord.size() > 1) {
+        for (const auto& m : g_mappings) {
+            if (m.midi_type == 2 && m.midi_chord == sortedChord) {
+                SimulateKeyCombo(m.key_vk, m.modifiers);
+                SendLog("Chord triggered: " + std::to_string(sortedChord.size()) + " notes");
+                found = true;
+                break;
+            }
+        }
+    }
+
+    // 2. If no chord mapping or single note, process individual mappings
+    if (!found) {
+        for (int note : sortedChord) {
+            ProcessMIDIEvent(0x90, note, 100); // Trigger as standard Note On
+        }
+    }
+}
+
+void ProcessMIDIEvent(int type, int number, int velocity) {
+    bool isNoteOn = (type == 0x90) && velocity > 0;
+    bool isNoteOff = (type == 0x80) || ((type == 0x90) && velocity == 0);
+    bool isCC = (type == 0xB0);
 
     // Update Piano Roll
     if (isNoteOn && number >= 0 && number < 128) {
@@ -444,6 +509,15 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
                     g_ccHoldActive[m.midi_num] = false;
                 }
                 break;
+            }
+        }
+        
+        // HUD / Layer Key support
+        if (m.midi_type == 3 && number == m.midi_num) {
+            if (isNoteOn) {
+                PostToWebView({ {"type", "hud"}, {"active", true}, {"title", WideToUtf8(GetModifierString(m.modifiers) + GetKeyName(m.key_vk))} });
+            } else if (isNoteOff) {
+                PostToWebView({ {"type", "hud"}, {"active", false} });
             }
         }
     }
@@ -743,6 +817,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 PostToWebView({ {"type", "piano_decay"}, {"velocities", vel} });
             }
         }
+        else if (wParam == CHORD_TIMER_ID) {
+            KillTimer(hwnd, CHORD_TIMER_ID);
+            std::vector<int> chord;
+            {
+                std::lock_guard<std::mutex> lock(g_chordMutex);
+                chord = g_chordBuffer;
+                g_chordBuffer.clear();
+            }
+            ProcessChord(chord);
+        }
+        break;
+    case WM_CHORD_SIGNAL:
+        KillTimer(hwnd, CHORD_TIMER_ID);
+        SetTimer(hwnd, CHORD_TIMER_ID, CHORD_THRESHOLD_MS, NULL);
         break;
     case WM_USER + 100: {
         int slot = (int)wParam;
@@ -780,6 +868,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SaveConfig();
         KillTimer(hwnd, RECONNECT_TIMER_ID);
         KillTimer(hwnd, PIANO_DECAY_TIMER);
+        KillTimer(hwnd, CHORD_TIMER_ID);
         if (g_hWinEventHook) { UnhookWinEvent(g_hWinEventHook); g_hWinEventHook = nullptr; }
         RemoveTrayIcon();
         g_midiIn.reset();
