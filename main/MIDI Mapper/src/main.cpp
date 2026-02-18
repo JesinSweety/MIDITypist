@@ -49,6 +49,7 @@ using json = nlohmann::json;
 #define RECONNECT_TIMER_ID 502
 #define RECONNECT_INTERVAL 3000
 #define WM_TRAYICON (WM_USER + 1)
+#define IDI_APP_ICON 101
 #define ID_TRAY_SHOW 4001
 #define ID_TRAY_EXIT 4002
 
@@ -436,7 +437,7 @@ void AddTrayIcon(HWND hwnd) {
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    g_nid.hIcon = LoadIcon(g_hInst, MAKEINTRESOURCE(IDI_APP_ICON));
     wcscpy_s(g_nid.szTip, L"MIDITypist");
     Shell_NotifyIcon(NIM_ADD, &g_nid);
 }
@@ -1261,6 +1262,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
+    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
     wc.hbrBackground = CreateSolidBrush(RGB(28, 28, 30));
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClass(&wc);
