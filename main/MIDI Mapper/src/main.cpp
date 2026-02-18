@@ -2,6 +2,8 @@
 #include <CommCtrl.h>
 #include <Psapi.h>
 #include <shellapi.h>
+#include <dwmapi.h>
+#include <gdiplus.h>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -16,6 +18,16 @@
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
+
+using namespace Gdiplus;
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_MICA_EFFECT
+#define DWMWA_MICA_EFFECT 1029
+#endif
 
 // ── Control IDs ──
 #define IDC_CB_PORTS 101
@@ -48,24 +60,26 @@
 #define PIANO_DECAY_MS 50
 
 // ── Colors ──
-COLORREF ACCENT_COLOR = RGB(36, 99, 202);
-COLORREF ACCENT_COLOR_HOVER = RGB(60, 130, 240);
-COLORREF BUTTON_TEXT = RGB(255, 255, 255);
-COLORREF BACKGROUND_COLOR = RGB(36, 36, 38);
-COLORREF LOG_BG = RGB(28, 28, 30);
-COLORREF LOG_TEXT = RGB(200, 200, 210);
-COLORREF LIST_BG = RGB(30, 30, 34);
-COLORREF LIST_TEXT = RGB(220, 220, 230);
-COLORREF PIANO_WHITE = RGB(220, 220, 225);
-COLORREF PIANO_BLACK = RGB(40, 40, 44);
-COLORREF PIANO_HIT = RGB(80, 200, 120);
-COLORREF PIANO_CC_HIT = RGB(255, 180, 60);
+// ── Rich Aesthetics ──
+COLORREF CLR_BG = RGB(20, 20, 22);
+COLORREF CLR_ACCENT = RGB(0, 120, 212);
+COLORREF CLR_ACCENT_HOVER = RGB(30, 150, 240);
+COLORREF CLR_CARD = RGB(32, 32, 34);
+COLORREF CLR_BORDER = RGB(60, 60, 64);
+COLORREF CLR_TEXT = RGB(240, 240, 245);
+COLORREF CLR_TEXT_DIM = RGB(160, 160, 170);
+
+ULONG_PTR g_gdiplusToken;
+int g_dpi = 96;
+
+int Scale(int p) { return MulDiv(p, g_dpi, 96); }
 
 using json = nlohmann::json;
 
 // ── Global State ──
 HINSTANCE g_hInst;
-HFONT g_hModernFont = nullptr;
+HFONT g_hFontTitle = nullptr;
+HFONT g_hFontNormal = nullptr;
 HWND g_hwndPorts, g_hwndButton, g_hwndLog, g_hwndLearn, g_hwndMappingList,
     g_hwndStatus, g_hwndSettings, g_hwndPianoRoll;
 HWND g_hwndMain = nullptr;
@@ -172,15 +186,27 @@ std::wstring GetConfigDir() {
 //  UI Helpers
 // ══════════════════════════════════════════
 
-void SetUIFont(HWND hwnd) {
-    if (!g_hModernFont) {
+void SetUIFont(HWND hwnd, bool isTitle = false) {
+    if (!g_hFontNormal) {
         LOGFONT lf = { 0 };
-        lf.lfHeight = 20;
-        lf.lfWeight = FW_SEMIBOLD;
-        wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Segoe UI");
-        g_hModernFont = CreateFontIndirect(&lf);
+        lf.lfHeight = -Scale(16);
+        lf.lfWeight = FW_NORMAL;
+        lf.lfQuality = CLEARTYPE_QUALITY;
+        wcscpy_s(lf.lfFaceName, L"Segoe UI Variable Display");
+        g_hFontNormal = CreateFontIndirect(&lf);
+
+        lf.lfHeight = -Scale(22);
+        lf.lfWeight = FW_BOLD;
+        g_hFontTitle = CreateFontIndirect(&lf);
     }
-    SendMessage(hwnd, WM_SETFONT, (WPARAM)g_hModernFont, TRUE);
+    SendMessage(hwnd, WM_SETFONT, (WPARAM)(isTitle ? g_hFontTitle : g_hFontNormal), TRUE);
+}
+
+void ApplyModernStyle(HWND hwnd) {
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    int mica = 1;
+    DwmSetWindowAttribute(hwnd, DWMWA_MICA_EFFECT, &mica, sizeof(mica));
 }
 
 void AddLog(const std::string& msg) {
@@ -402,48 +428,41 @@ LRESULT CALLBACK PianoRollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+        Graphics graphics(hdc);
+        graphics.SetSmoothingMode(SmoothingModeAntiAlias);
+
         RECT rc;
         GetClientRect(hwnd, &rc);
         int w = rc.right - rc.left;
         int h = rc.bottom - rc.top;
 
         // Dark background
-        HBRUSH bgBrush = CreateSolidBrush(RGB(20, 20, 24));
-        FillRect(hdc, &rc, bgBrush);
-        DeleteObject(bgBrush);
+        SolidBrush bgBrush(Color(255, 20, 20, 24));
+        graphics.FillRectangle(&bgBrush, 0, 0, w, h);
 
         // Draw keys
         float keyW = (float)w / PIANO_TOTAL_KEYS;
         for (int i = 0; i < PIANO_TOTAL_KEYS; i++) {
-            RECT kr;
-            kr.left = (int)(i * keyW);
-            kr.right = (int)((i + 1) * keyW);
-            kr.top = 0;
-            kr.bottom = h;
+            float x1 = i * keyW;
+            float x2 = (i + 1) * keyW;
 
-            COLORREF color;
+            Color color;
             if (g_pianoVelocity[i] > 0) {
-                // Brightness based on velocity
                 int g = 80 + g_pianoVelocity[i];
                 if (g > 255) g = 255;
-                color = RGB(40, g, 80);
+                color = Color(255, 40, g, 80);
             }
             else {
-                color = IsBlackKey(i) ? PIANO_BLACK : PIANO_WHITE;
+                color = IsBlackKey(i) ? Color(255, 40, 40, 44) : Color(255, 220, 220, 225);
             }
 
-            HBRUSH kb = CreateSolidBrush(color);
-            FillRect(hdc, &kr, kb);
-            DeleteObject(kb);
+            SolidBrush kb(color);
+            graphics.FillRectangle(&kb, x1, 0.0f, x2 - x1, (REAL)h);
 
-            // Thin separator
+            // Thin separator for white keys
             if (!IsBlackKey(i)) {
-                HPEN pen = CreatePen(PS_SOLID, 1, RGB(60, 60, 64));
-                HPEN oldPen = (HPEN)SelectObject(hdc, pen);
-                MoveToEx(hdc, kr.right, 0, NULL);
-                LineTo(hdc, kr.right, h);
-                SelectObject(hdc, oldPen);
-                DeleteObject(pen);
+                Pen pen(Color(255, 60, 60, 64), 1.0f);
+                graphics.DrawLine(&pen, x2, 0.0f, x2, (REAL)h);
             }
         }
 
@@ -802,44 +821,89 @@ void LayoutControls(HWND hwnd) {
     int cw = rc.right - rc.left;
     int ch = rc.bottom - rc.top;
 
-    int topBar = 70;
-    int pianoH = PIANO_ROLL_HEIGHT;
-    int statusH = 24;
-    int bodyH = ch - topBar - pianoH - statusH - 8;
-    int halfW = cw / 2 - 15;
+    int pad = Scale(20);
+    int topH = Scale(60);
+    int pianoH = Scale(PIANO_ROLL_HEIGHT);
+    int statusH = Scale(24);
+    int bodyH = ch - topH - pianoH - statusH - (pad * 2);
+    int halfW = (cw - (pad * 3)) / 2;
 
-    if (g_hwndLog) MoveWindow(g_hwndLog, 10, topBar, halfW, bodyH, TRUE);
-    if (g_hwndMappingList) MoveWindow(g_hwndMappingList, 10 + halfW + 10, topBar, halfW, bodyH, TRUE);
-    if (g_hwndPianoRoll) MoveWindow(g_hwndPianoRoll, 10, topBar + bodyH + 4, cw - 20, pianoH, TRUE);
+    MoveWindow(g_hwndPorts, pad, pad, Scale(220), Scale(34), TRUE);
+    MoveWindow(g_hwndButton, pad + Scale(230), pad, Scale(120), Scale(34), TRUE);
+    MoveWindow(g_hwndLearn, pad + Scale(360), pad, Scale(150), Scale(34), TRUE);
+    MoveWindow(g_hwndSettings, pad + Scale(520), pad, Scale(120), Scale(34), TRUE);
+
+    MoveWindow(g_hwndLog, pad, topH + pad, halfW, bodyH, TRUE);
+    MoveWindow(g_hwndMappingList, (pad * 2) + halfW, topH + pad, halfW, bodyH, TRUE);
+    MoveWindow(g_hwndPianoRoll, pad, ch - pianoH - statusH - pad, cw - (pad * 2), pianoH, TRUE);
     if (g_hwndStatus) SendMessage(g_hwndStatus, WM_SIZE, 0, 0);
+}
+
+void DrawRoundButton(LPDRAWITEMSTRUCT pDIS, COLORREF color) {
+    Graphics g(pDIS->hDC);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+
+    RECT rc = pDIS->rcItem;
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    int r = Scale(8);
+
+    GraphicsPath path;
+    path.AddArc(0, 0, r, r, 180, 90);
+    path.AddArc(w - r - 1, 0, r, r, 270, 90);
+    path.AddArc(w - r - 1, h - r - 1, r, r, 0, 90);
+    path.AddArc(0, h - r - 1, r, r, 90, 90);
+    path.CloseFigure();
+
+    SolidBrush brush(Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
+    g.FillPath(&brush, &path);
+
+    // Text
+    wchar_t text[64];
+    GetWindowText(pDIS->hwndItem, text, 64);
+    
+    StringFormat format;
+    format.SetAlignment(StringAlignmentCenter);
+    format.SetLineAlignment(StringAlignmentCenter);
+    
+    SolidBrush textBrush(Color(255, 255, 255, 255));
+    Font font(pDIS->hDC);
+    RectF rectF(0, 0, (REAL)w, (REAL)h);
+    g.DrawString(text, -1, &font, rectF, &format, &textBrush);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
-        int x = 20;
-        int btn_w = 120, btn_h = 34, gap = 16;
+        g_hwndMain = hwnd;
+        g_dpi = GetDpiForWindow(hwnd);
+        ApplyModernStyle(hwnd);
+
+        int btn_h = Scale(34);
         g_hwndPorts = CreateWindow(L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-            x, 24, 220, btn_h, hwnd, (HMENU)IDC_CB_PORTS, g_hInst, nullptr);
-        SetUIFont(g_hwndPorts); x += 230;
+            0, 0, 0, 0, hwnd, (HMENU)IDC_CB_PORTS, g_hInst, nullptr);
+        SetUIFont(g_hwndPorts);
+
         g_hwndButton = CreateWindow(L"BUTTON", L"Connect", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            x, 24, btn_w, btn_h, hwnd, (HMENU)IDC_BTN_CONNECT, g_hInst, nullptr);
-        SetUIFont(g_hwndButton); x += btn_w + gap;
+            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CONNECT, g_hInst, nullptr);
+        SetUIFont(g_hwndButton);
+
         g_hwndLearn = CreateWindow(L"BUTTON", L"Learn Mapping", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            x, 24, btn_w + 30, btn_h, hwnd, (HMENU)IDC_BTN_LEARN, g_hInst, nullptr);
-        SetUIFont(g_hwndLearn); x += btn_w + 30 + gap;
+            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LEARN, g_hInst, nullptr);
+        SetUIFont(g_hwndLearn);
+
         g_hwndSettings = CreateWindow(L"BUTTON", L"Settings", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            x, 24, btn_w, btn_h, hwnd, (HMENU)IDC_BTN_SETTINGS, g_hInst, nullptr);
+            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SETTINGS, g_hInst, nullptr);
         SetUIFont(g_hwndSettings);
 
-        g_hwndLog = CreateWindowEx(0, L"EDIT", nullptr,
+        g_hwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", nullptr,
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
-            20, 70, 480, 340, hwnd, (HMENU)IDC_LOGBOX, g_hInst, nullptr);
+            0, 0, 0, 0, hwnd, (HMENU)IDC_LOGBOX, g_hInst, nullptr);
         SetUIFont(g_hwndLog);
 
-        g_hwndMappingList = CreateWindow(L"LISTBOX", nullptr,
-            WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL | LBS_EXTENDEDSEL | WS_BORDER,
-            520, 70, 540, 340, hwnd, (HMENU)IDC_LIST_MAPPINGS, g_hInst, nullptr);
+        g_hwndMappingList = CreateWindowEx(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
+            WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL | LBS_EXTENDEDSEL,
+            0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_MAPPINGS, g_hInst, nullptr);
         SetUIFont(g_hwndMappingList);
 
         // Register Piano Roll class
@@ -1003,45 +1067,53 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         LPDRAWITEMSTRUCT pDIS = (LPDRAWITEMSTRUCT)lParam;
         if (pDIS->CtlType == ODT_BUTTON) {
             BOOL pressed = (pDIS->itemState & ODS_SELECTED);
-            HBRUSH hBrush = CreateSolidBrush(pressed ? ACCENT_COLOR_HOVER : ACCENT_COLOR);
-            // Rounded-ish fill
-            FillRect(pDIS->hDC, &pDIS->rcItem, hBrush);
-            SetBkMode(pDIS->hDC, TRANSPARENT);
-            SetTextColor(pDIS->hDC, BUTTON_TEXT);
-            wchar_t btnText[64];
-            GetWindowText(pDIS->hwndItem, btnText, 63);
-            DrawText(pDIS->hDC, btnText, -1, &pDIS->rcItem,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            DeleteObject(hBrush);
+            DrawRoundButton(pDIS, pressed ? CLR_ACCENT_HOVER : CLR_ACCENT);
             return TRUE;
         }
         break;
     }
     case WM_CTLCOLOREDIT: {
         HDC hdc = (HDC)wParam;
-        SetBkColor(hdc, LOG_BG);
-        SetTextColor(hdc, LOG_TEXT);
-        static HBRUSH logBrush = CreateSolidBrush(LOG_BG);
+        SetBkColor(hdc, CLR_CARD); 
+        SetTextColor(hdc, CLR_TEXT);
+        static HBRUSH logBrush = CreateSolidBrush(CLR_CARD);
         return (LRESULT)logBrush;
     }
     case WM_CTLCOLORLISTBOX: {
         HDC hdc = (HDC)wParam;
-        SetBkColor(hdc, LIST_BG);
-        SetTextColor(hdc, LIST_TEXT);
-        static HBRUSH listBrush = CreateSolidBrush(LIST_BG);
+        SetBkColor(hdc, CLR_CARD);
+        SetTextColor(hdc, CLR_TEXT);
+        static HBRUSH listBrush = CreateSolidBrush(CLR_CARD);
         return (LRESULT)listBrush;
     }
     case WM_ERASEBKGND: {
         HDC hdc = (HDC)wParam;
         RECT rc;
         GetClientRect(hwnd, &rc);
-        HBRUSH hBg = CreateSolidBrush(BACKGROUND_COLOR);
+        HBRUSH hBg = CreateSolidBrush(CLR_BG);
         FillRect(hdc, &rc, hBg);
         DeleteObject(hBg);
         return 1;
     }
+    case WM_DPICHANGED: {
+        g_dpi = HIWORD(wParam);
+        RECT* prcNew = (RECT*)lParam;
+        SetWindowPos(hwnd, NULL, prcNew->left, prcNew->top, 
+            prcNew->right - prcNew->left, prcNew->bottom - prcNew->top, 
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        // Regenerate fonts on DPI change
+        if (g_hFontNormal) { DeleteObject(g_hFontNormal); g_hFontNormal = nullptr; }
+        if (g_hFontTitle) { DeleteObject(g_hFontTitle); g_hFontTitle = nullptr; }
+        SetUIFont(g_hwndPorts);
+        SetUIFont(g_hwndButton);
+        SetUIFont(g_hwndLearn);
+        SetUIFont(g_hwndSettings);
+        SetUIFont(g_hwndLog);
+        SetUIFont(g_hwndMappingList);
+        LayoutControls(hwnd);
+        break;
+    }
     case WM_CLOSE:
-        // Minimize to tray instead of closing
         MinimizeToTray(hwnd);
         return 0;
     case WM_DESTROY:
@@ -1050,7 +1122,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, PIANO_DECAY_TIMER);
         if (g_hWinEventHook) { UnhookWinEvent(g_hWinEventHook); g_hWinEventHook = nullptr; }
         RemoveTrayIcon();
-        if (g_hModernFont) DeleteObject(g_hModernFont);
+        if (g_hFontNormal) DeleteObject(g_hFontNormal);
+        if (g_hFontTitle) DeleteObject(g_hFontTitle);
+        GdiplusShutdown(g_gdiplusToken);
         g_midiIn.reset();
         PostQuitMessage(0);
         return 0;
@@ -1063,6 +1137,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // ══════════════════════════════════════════
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
+
     g_hInst = hInstance;
     INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_BAR_CLASSES };
     InitCommonControlsEx(&icc);
@@ -1073,10 +1152,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClass(&wc);
 
-    HWND hwnd = CreateWindowEx(0, CLASS_NAME, L"MIDITypist v2.0",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1140, 580,
+    HWND hwnd = CreateWindowEx(0, CLASS_NAME, L"MIDITypist",
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, Scale(1140), Scale(600),
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
