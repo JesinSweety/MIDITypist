@@ -783,6 +783,56 @@
       font-weight: 600;
       color: var(--text-primary);
     }
+
+    /* Context Band (v4.2) */
+    .context-band {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 16px;
+      background: rgba(var(--accent-rgb), 0.1);
+      border-bottom: 1px solid var(--border-card);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      animation: slideDown 0.3s ease;
+    }
+
+    .context-band .icon {
+      opacity: 0.6;
+      font-size: 14px;
+    }
+
+    .context-band .app-name {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .context-band .divider {
+      width: 1px;
+      height: 12px;
+      background: var(--border-card);
+      margin: 0 4px;
+    }
+
+    .context-band .window-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.8;
+    }
+
+    @keyframes slideDown {
+      from {
+        transform: translateY(-100%);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
   </style>
 </head>
 
@@ -798,6 +848,14 @@
       <span id="connectionLabel" style="font-size:11px;font-weight:500;color:var(--text-tertiary);">Disconnected</span>
       <div id="statusDot" class="status-dot"></div>
     </div>
+  </div>
+
+  <!-- Context Band (Signals) -->
+  <div id="contextBand" class="context-band" style="display:none;">
+    <span class="icon">🎯</span>
+    <span id="contextApp" class="app-name">None</span>
+    <div class="divider"></div>
+    <span id="contextTitle" class="window-title">No foreground window</span>
   </div>
 
   <!-- Toolbar -->
@@ -1052,9 +1110,15 @@
           <textarea id="editAiPrompt"
             style="width:100%; height:80px; padding:8px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px; font-family:inherit;"></textarea>
         </div>
+        <div id="editFieldApp" class="control-item">
+          <label style="display:block; margin-bottom:6px; font-size:12px; color:var(--text-secondary);">App Filter
+            (e.g. chrome.exe)</label>
+          <input type="text" id="editAppPattern" placeholder="Process name"
+            style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px; font-family:inherit;">
+        </div>
         <div id="editFieldTitle" class="control-item">
           <label style="display:block; margin-bottom:6px; font-size:12px; color:var(--text-secondary);">Window Title
-            Filter (Optional)</label>
+            Filter (Pattern)</label>
           <input type="text" id="editTitlePattern" placeholder="e.g. index.html"
             style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px; font-family:inherit;">
         </div>
@@ -1212,6 +1276,16 @@
           handleAiRequest(msg.prompt);
           break;
         case 'app_changed':
+          // Update Context Band
+          const band = document.getElementById('contextBand');
+          const contextApp = document.getElementById('contextApp');
+          const contextTitle = document.getElementById('contextTitle');
+
+          band.style.display = 'flex';
+          contextApp.textContent = msg.app || 'Unknown';
+          contextTitle.textContent = msg.title || 'Untitled';
+
+          // Also log for history
           addLog(`Context: ${msg.app} > ${msg.title}`, "system");
           break;
       }
@@ -1330,8 +1404,12 @@
         if (m.midi_type === 4) targetText = "Macro: " + (m.macro_text.substring(0, 15) + "...");
         if (m.midi_type === 5) targetText = "AI: " + (m.ai_prompt.substring(0, 15) + "...");
 
-        if (m.title_pattern) {
-          targetText += ` [if: ${m.title_pattern}]`;
+        if (m.title_pattern || m.app_pattern) {
+          let contextLabel = ' [if:';
+          if (m.app_pattern) contextLabel += ` ${m.app_pattern}`;
+          if (m.title_pattern) contextLabel += ` ${m.app_pattern ? '& ' : ''}${m.title_pattern}`;
+          contextLabel += ']';
+          targetText += contextLabel;
         }
 
         let zoneBadge = '';
@@ -1456,6 +1534,7 @@
       document.getElementById('editMacroText').value = m.macro_text || "";
       document.getElementById('editAiPrompt').value = m.ai_prompt || "";
       document.getElementById('editTitlePattern').value = m.title_pattern || "";
+      document.getElementById('editAppPattern').value = m.app_pattern || "";
       toggleEditFields();
     }
 
@@ -1484,7 +1563,8 @@
         key_vk: vk,
         macro_text: macro,
         ai_prompt: ai,
-        title_pattern: title
+        title_pattern: title,
+        app_pattern: document.getElementById('editAppPattern').value
       });
       closeEditor();
     }

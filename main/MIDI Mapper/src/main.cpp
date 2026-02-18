@@ -86,12 +86,13 @@ struct Mapping {
     std::string macro_text; // for Macro
     std::string ai_prompt;  // for AI
     std::string title_pattern; // for Context Filter
+    std::string app_pattern;   // for Process Filter (e.g. chrome.exe)
 };
 
 std::vector<Mapping> g_mappings;
 std::mutex g_mappingsMutex;
 bool g_learning = false;
-Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "" };
+Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "" };
 
 // ── Per-App Profile ──
 std::map<std::wstring, std::wstring> g_appProfileBindings;
@@ -221,7 +222,8 @@ void SendMappingsToUI() {
             {"target_display", WideToUtf8(targetDisplay)},
             {"macro_text", m.macro_text},
             {"ai_prompt", m.ai_prompt},
-            {"title_pattern", m.title_pattern}
+            {"title_pattern", m.title_pattern},
+            {"app_pattern", m.app_pattern}
         };
         if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
         arr.push_back(item);
@@ -312,6 +314,7 @@ void SaveMappings(const std::wstring& filename) {
             if (m.midi_type == 4) item["macro_text"] = m.macro_text;
             if (m.midi_type == 5) item["ai_prompt"] = m.ai_prompt;
             if (!m.title_pattern.empty()) item["title_pattern"] = m.title_pattern;
+            if (!m.app_pattern.empty()) item["app_pattern"] = m.app_pattern;
             j.push_back(item);
         }
     }
@@ -337,6 +340,7 @@ void LoadMappings(const std::wstring& filename) {
             m.macro_text = it.value("macro_text", "");
             m.ai_prompt = it.value("ai_prompt", "");
             m.title_pattern = it.value("title_pattern", "");
+            m.app_pattern = it.value("app_pattern", "");
             m.key_vk = it.value("key_vk", 0);
             m.modifiers = it.value("modifiers", 0);
             m.vel_min = it.value("vel_min", 1);
@@ -473,13 +477,16 @@ void ProcessChord(const std::vector<int>& chord) {
     // 1. Try to find a specific chord mapping
     if (sortedChord.size() > 1) {
         for (const auto& m : g_mappings) {
-            // Smart Context Filter (v4.1)
+            // Context Stack Filtering (v4.2): Title + App
             if (!m.title_pattern.empty()) {
                 std::string currentTitle = WideToUtf8(g_currentWindowTitle);
-                if (currentTitle.find(m.title_pattern) == std::string::npos) {
-                    continue; // Skip if title doesn't match
-                }
+                if (currentTitle.find(m.title_pattern) == std::string::npos) continue;
             }
+            if (!m.app_pattern.empty()) {
+                std::string currentApp = WideToUtf8(g_currentApp);
+                if (currentApp.find(m.app_pattern) == std::string::npos) continue;
+            }
+
             if (m.midi_type == 2 && m.midi_chord == sortedChord) {
                 SimulateKeyCombo(m.key_vk, m.modifiers);
                 SendLog("Chord triggered: " + std::to_string(sortedChord.size()) + " notes");
@@ -535,12 +542,14 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     // Execute mappings
     std::lock_guard<std::mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
-        // Smart Context Filter (v4.1)
+        // Context Stack Filtering (v4.2): Title + App
         if (!m.title_pattern.empty()) {
             std::string currentTitle = WideToUtf8(g_currentWindowTitle);
-            if (currentTitle.find(m.title_pattern) == std::string::npos) {
-                continue; // Skip if title doesn't match
-            }
+            if (currentTitle.find(m.title_pattern) == std::string::npos) continue;
+        }
+        if (!m.app_pattern.empty()) {
+            std::string currentApp = WideToUtf8(g_currentApp);
+            if (currentApp.find(m.app_pattern) == std::string::npos) continue;
         }
 
         if (m.profile_switch >= 0) {
@@ -848,6 +857,7 @@ void HandleWebMessage(const std::string& messageStr) {
                 m.macro_text = msg.value("macro_text", m.macro_text);
                 m.ai_prompt = msg.value("ai_prompt", m.ai_prompt);
                 m.title_pattern = msg.value("title_pattern", m.title_pattern);
+                m.app_pattern = msg.value("app_pattern", m.app_pattern);
             }
         }
         SendMappingsToUI();
@@ -906,7 +916,7 @@ void HandleWebMessage(const std::string& messageStr) {
     else if (action == "add_mapping") {
         {
             std::lock_guard<std::mutex> lock(g_mappingsMutex);
-            Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "" };
+            Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "", "" };
             g_mappings.push_back(m);
         }
         SendMappingsToUI();
