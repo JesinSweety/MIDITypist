@@ -428,17 +428,20 @@ LRESULT CALLBACK PianoRollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
-        Graphics graphics(hdc);
-        graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-
+        
         RECT rc;
         GetClientRect(hwnd, &rc);
         int w = rc.right - rc.left;
         int h = rc.bottom - rc.top;
 
+        // Double buffer for zero flicker
+        Bitmap buffer(w, h);
+        Graphics* g = Graphics::FromImage(&buffer);
+        g->SetSmoothingMode(SmoothingModeAntiAlias);
+
         // Dark background
         SolidBrush bgBrush(Color(255, 20, 20, 24));
-        graphics.FillRectangle(&bgBrush, 0, 0, w, h);
+        g->FillRectangle(&bgBrush, 0, 0, w, h);
 
         // Draw keys
         float keyW = (float)w / PIANO_TOTAL_KEYS;
@@ -448,23 +451,26 @@ LRESULT CALLBACK PianoRollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
             Color color;
             if (g_pianoVelocity[i] > 0) {
-                int g = 80 + g_pianoVelocity[i];
-                if (g > 255) g = 255;
-                color = Color(255, 40, g, 80);
+                int velG = 80 + g_pianoVelocity[i];
+                if (velG > 255) velG = 255;
+                color = Color(255, 40, velG, 80);
             }
             else {
                 color = IsBlackKey(i) ? Color(255, 40, 40, 44) : Color(255, 220, 220, 225);
             }
 
             SolidBrush kb(color);
-            graphics.FillRectangle(&kb, x1, 0.0f, x2 - x1, (REAL)h);
+            g->FillRectangle(&kb, x1, 0.0f, x2 - x1, (REAL)h);
 
-            // Thin separator for white keys
             if (!IsBlackKey(i)) {
                 Pen pen(Color(255, 60, 60, 64), 1.0f);
-                graphics.DrawLine(&pen, x2, 0.0f, x2, (REAL)h);
+                g->DrawLine(&pen, x2, 0.0f, x2, (REAL)h);
             }
         }
+
+        Graphics graphics(hdc);
+        graphics.DrawImage(&buffer, 0, 0);
+        delete g;
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -986,6 +992,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         else if (LOWORD(wParam) == IDC_BTN_SETTINGS) {
             DialogBox(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, SettingsDlgProc);
+        }
+        else if (LOWORD(wParam) == ID_TRAY_SHOW) {
+            RestoreFromTray(hwnd);
+        }
+        else if (LOWORD(wParam) == ID_TRAY_EXIT) {
+            DestroyWindow(hwnd);
         }
         break;
     case WM_KEYDOWN:
