@@ -1,6 +1,10 @@
 # Build Results
 [Bb]in/
 [Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
 *.obj
 *.exe
 *.pdb
@@ -8,11 +12,19 @@
 *.log
 *.vcxproj.user
 *.tlog/
-*.log
 *.sdf
 *.opensdf
+*.VC.db
+*.VC.opendb
+
+# Visual Studio 2015/2017/2019/2022 cache/options directory
+.vs/
+main/.vs/
 
 # VS Code and IDE stuff
 .vscode/
-*.VC.db
-*.VC.opendb
+
+# Other
+config.json
+profile.json
+*.user
