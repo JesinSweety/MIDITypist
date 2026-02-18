@@ -28,3 +28,7 @@ main/.vs/
 config.json
 profile.json
 *.user
+
+# NuGet
+packages/
+nuget.exe

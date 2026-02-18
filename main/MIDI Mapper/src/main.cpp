@@ -3,7 +3,7 @@
 #include <Psapi.h>
 #include <shellapi.h>
 #include <dwmapi.h>
-#include <gdiplus.h>
+#include <shlwapi.h>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -12,38 +12,30 @@
 #include <mutex>
 #include <memory>
 #include <algorithm>
+#include <functional>
 #include "RtMidi.h"
 #include "json.hpp"
+
+// WebView2
+#include <wrl.h>
+#include <wil/com.h>
+#include "WebView2.h"
 
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "dwmapi.lib")
-#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "Shlwapi.lib")
 
-using namespace Gdiplus;
+using namespace Microsoft::WRL;
+using json = nlohmann::json;
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 #ifndef DWMWA_MICA_EFFECT
 #define DWMWA_MICA_EFFECT 1029
 #endif
-
-// ── Control IDs ──
-#define IDC_CB_PORTS 101
-#define IDC_BTN_CONNECT 102
-#define IDC_BTN_LEARN 104
-#define IDC_BTN_SETTINGS 150
-#define IDC_LOGBOX 103
-#define IDC_LIST_MAPPINGS 106
-#define IDC_STATUSBAR 108
-#define IDD_SETTINGS 400
-#define IDC_BTN_SAVEPROFILE 120
-#define IDC_BTN_LOADPROFILE 121
-#define IDC_BTN_BINDPROFILE 130
-#define IDC_BTN_CLEARLOG 105
-#define IDC_BTN_CLEARMAPS 107
-#define IDC_BTN_ABOUT 109
 
 // ── Timers & Tray ──
 #define RECONNECT_TIMER_ID 502
@@ -53,56 +45,32 @@ using namespace Gdiplus;
 #define ID_TRAY_EXIT 4002
 
 // ── Piano Roll ──
-#define IDC_PIANO_ROLL 160
-#define PIANO_ROLL_HEIGHT 60
 #define PIANO_TOTAL_KEYS 128
 #define PIANO_DECAY_TIMER 503
 #define PIANO_DECAY_MS 50
 
-// ── Colors ──
-// ── Rich Aesthetics (Glassmorphism) ──
-Color CLR_GLASS_BG(200, 15, 15, 18);        // Semi-transparent base
-Color CLR_GLASS_CARD(40, 255, 255, 255);    // Very thin glass
-Color CLR_GLASS_BORDER(60, 255, 255, 255);  // Subtle glass edge
-Color CLR_ACCENT(255, 0, 120, 212);         // Bright blue
-Color CLR_ACCENT_HOVER(255, 30, 150, 240);  // Hover blue
-Color CLR_TEXT(255, 245, 245, 250);         // Text color
-Color CLR_TEXT_DIM(180, 200, 200, 210);     // Dimmed text
-
-ULONG_PTR g_gdiplusToken;
-int g_dpi = 96;
-
-int Scale(int p) { return MulDiv(p, g_dpi, 96); }
-
-COLORREF ColorToRGB(Color c) {
-    return RGB(c.GetR(), c.GetG(), c.GetB());
-}
-
-using json = nlohmann::json;
-
 // ── Global State ──
 HINSTANCE g_hInst;
-HFONT g_hFontTitle = nullptr;
-HFONT g_hFontNormal = nullptr;
-HWND g_hwndPorts, g_hwndButton, g_hwndLog, g_hwndLearn, g_hwndMappingList,
-    g_hwndStatus, g_hwndSettings, g_hwndPianoRoll;
 HWND g_hwndMain = nullptr;
+wil::com_ptr<ICoreWebView2> g_webview;
+wil::com_ptr<ICoreWebView2Controller> g_controller;
+
 std::unique_ptr<RtMidiIn> g_midiIn;
 std::vector<std::string> g_ports;
 bool g_connected = false;
 int g_lastConnectedPort = -1;
 std::string g_lastConnectedPortName;
 
-// ── Mapping struct with modifiers and velocity ──
+// ── Mapping struct ──
 struct Mapping {
     int midi_type;      // 0=Note, 1=CC
     int midi_num;
     int key_vk;
     int modifiers;      // bitmask: 1=Ctrl, 2=Shift, 4=Alt
-    int vel_min;        // velocity threshold (0-127, default 1)
+    int vel_min;
     int vel_zone;       // 0=any, 1=soft(1-63), 2=hard(64-127)
     int cc_action;      // 0=keypress, 1=mouse_x, 2=mouse_y, 3=scroll, 4=hold_key
-    int profile_switch; // -1=normal, 0+=profile slot index to switch to
+    int profile_switch; // -1=normal, 0+=profile slot index
 };
 
 std::vector<Mapping> g_mappings;
@@ -187,133 +155,48 @@ std::wstring GetConfigDir() {
 }
 
 // ══════════════════════════════════════════
-//  UI Helpers
+//  WebView2 Message Bridge
 // ══════════════════════════════════════════
 
-void SetUIFont(HWND hwnd, bool isTitle = false) {
-    if (!g_hFontNormal) {
-        LOGFONT lf = { 0 };
-        lf.lfHeight = -Scale(16);
-        lf.lfWeight = FW_NORMAL;
-        lf.lfQuality = CLEARTYPE_QUALITY;
-        wcscpy_s(lf.lfFaceName, L"Segoe UI Variable Display");
-        g_hFontNormal = CreateFontIndirect(&lf);
+void PostToWebView(const json& msg) {
+    if (!g_webview) return;
+    std::string s = msg.dump();
+    std::wstring ws = Utf8ToWide(s);
+    g_webview->PostWebMessageAsJson(ws.c_str());
+}
 
-        lf.lfHeight = -Scale(22);
-        lf.lfWeight = FW_BOLD;
-        g_hFontTitle = CreateFontIndirect(&lf);
+void SendLog(const std::string& text, const std::string& category = "system") {
+    PostToWebView({ {"type", "log"}, {"text", text}, {"category", category} });
+}
+
+void SendStatus(const std::string& text) {
+    PostToWebView({ {"type", "status"}, {"text", text} });
+}
+
+void SendMappingsToUI() {
+    json arr = json::array();
+    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    for (const auto& m : g_mappings) {
+        std::wstring targetDisplay;
+        if (m.profile_switch >= 0) {
+            targetDisplay = L"[Profile #" + std::to_wstring(m.profile_switch) + L"]";
+        } else if (m.midi_type == 1 && m.cc_action > 0) {
+            const wchar_t* actions[] = { L"", L"MouseX", L"MouseY", L"Scroll", L"HoldKey" };
+            targetDisplay = actions[m.cc_action];
+            if (m.cc_action == 4) targetDisplay += L"(" + GetKeyName(m.key_vk) + L")";
+        } else {
+            targetDisplay = GetModifierString(m.modifiers) + GetKeyName(m.key_vk);
+        }
+
+        arr.push_back({
+            {"midi_type", m.midi_type}, {"midi_num", m.midi_num},
+            {"key_vk", m.key_vk}, {"modifiers", m.modifiers},
+            {"vel_min", m.vel_min}, {"vel_zone", m.vel_zone},
+            {"cc_action", m.cc_action}, {"profile_switch", m.profile_switch},
+            {"target_display", WideToUtf8(targetDisplay)}
+        });
     }
-    SendMessage(hwnd, WM_SETFONT, (WPARAM)(isTitle ? g_hFontTitle : g_hFontNormal), TRUE);
-}
-
-void ApplyModernStyle(HWND hwnd) {
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    
-    // Mica Alt (Windows 11)
-    int mica = 2; 
-    DwmSetWindowAttribute(hwnd, DWMWA_MICA_EFFECT, &mica, sizeof(mica));
-
-    // Extend frame for total glass effect
-    MARGINS margins = { -1 };
-    DwmExtendFrameIntoClientArea(hwnd, &margins);
-}
-
-void DrawGlassCard(Graphics& g, Rect r, const wchar_t* title) {
-    int radius = Scale(16);
-    GraphicsPath path;
-    path.AddArc(r.X, r.Y, radius, radius, 180, 90);
-    path.AddArc(r.X + r.Width - radius, r.Y, radius, radius, 270, 90);
-    path.AddArc(r.X + r.Width - radius, r.Y + r.Height - radius, radius, radius, 0, 90);
-    path.AddArc(r.X, r.Y + r.Height - radius, radius, radius, 90, 90);
-    path.CloseFigure();
-
-    // Translucent fill
-    SolidBrush cardBrush(CLR_GLASS_CARD);
-    g.FillPath(&cardBrush, &path);
-
-    // Subtle edge highlight
-    Pen glassPen(CLR_GLASS_BORDER, 1.2f);
-    g.DrawPath(&glassPen, &path);
-
-    if (title) {
-        Font font(L"Segoe UI Variable Display", (REAL)Scale(10), FontStyleBold);
-        SolidBrush textBrush(CLR_TEXT_DIM);
-        g.DrawString(title, -1, &font, PointF((REAL)r.X + 18, (REAL)r.Y + 12), &textBrush);
-    }
-}
-
-void DrawRoundButton(LPDRAWITEMSTRUCT pDIS, Color baseColor) {
-    Graphics g(pDIS->hDC);
-    g.SetSmoothingMode(SmoothingModeAntiAlias);
-
-    Rect r(0, 0, pDIS->rcItem.right, pDIS->rcItem.bottom);
-    int radius = Scale(10);
-
-    GraphicsPath path;
-    path.AddArc(r.X, r.Y, radius, radius, 180, 90);
-    path.AddArc(r.X + r.Width - radius, r.Y, radius, radius, 270, 90);
-    path.AddArc(r.X + r.Width - radius, r.Y + r.Height - radius, radius, radius, 0, 90);
-    path.AddArc(r.X, r.Y + r.Height - radius, radius, radius, 90, 90);
-    path.CloseFigure();
-
-    // Linear Gradient
-    LinearGradientBrush brush(r, baseColor, Color(255, 
-        (int)(baseColor.GetR() * 0.7), (int)(baseColor.GetG() * 0.7), (int)(baseColor.GetB() * 0.7)), 
-        LinearGradientModeVertical);
-    g.FillPath(&brush, &path);
-
-    // Inner glow
-    Pen shinePen(Color(120, 255, 255, 255), 1.0f);
-    g.DrawPath(&shinePen, &path);
-
-    wchar_t text[64];
-    GetWindowText(pDIS->hwndItem, text, 64);
-    StringFormat format;
-    format.SetAlignment(StringAlignmentCenter);
-    format.SetLineAlignment(StringAlignmentCenter);
-    SolidBrush textBrush(Color(255, 255, 255, 255));
-    Font font(pDIS->hDC);
-    RectF rectF((REAL)r.X, (REAL)r.Y, (REAL)r.Width, (REAL)r.Height);
-    g.DrawString(text, -1, &font, rectF, &format, &textBrush);
-}
-
-void LayoutControls(HWND hwnd) {
-    RECT rc;
-    GetClientRect(hwnd, &rc);
-    int cw = rc.right - rc.left;
-    int ch = rc.bottom - rc.top;
-
-    int pad = Scale(24);
-    int topH = Scale(70);
-    int pianoH = Scale(PIANO_ROLL_HEIGHT);
-    int statusH = Scale(24);
-    int bodyH = ch - topH - pianoH - statusH - (pad * 2);
-    int halfW = (cw - (pad * 3)) / 2;
-
-    int btnY = Scale(25);
-    MoveWindow(g_hwndPorts, pad, btnY, Scale(220), Scale(34), TRUE);
-    MoveWindow(g_hwndButton, pad + Scale(230), btnY, Scale(120), Scale(34), TRUE);
-    MoveWindow(g_hwndLearn, pad + Scale(360), btnY, Scale(150), Scale(34), TRUE);
-    MoveWindow(g_hwndSettings, pad + Scale(520), btnY, Scale(120), Scale(34), TRUE);
-
-    // Offset edit/listbox slightly to sit inside the glassy card
-    MoveWindow(g_hwndLog, pad + Scale(8), topH + pad + Scale(32), halfW - Scale(16), bodyH - Scale(42), TRUE);
-    MoveWindow(g_hwndMappingList, (pad * 2) + halfW + Scale(8), topH + pad + Scale(32), halfW - Scale(16), bodyH - Scale(42), TRUE);
-    MoveWindow(g_hwndPianoRoll, pad, ch - pianoH - statusH - pad, cw - (pad * 2), pianoH, TRUE);
-    if (g_hwndStatus) SendMessage(g_hwndStatus, WM_SIZE, 0, 0);
-}
-
-void AddLog(const std::string& msg) {
-    std::string line = msg + "\r\n";
-    int len = GetWindowTextLength(g_hwndLog);
-    SendMessage(g_hwndLog, EM_SETSEL, len, len);
-    SendMessageA(g_hwndLog, EM_REPLACESEL, FALSE, (LPARAM)line.c_str());
-    SendMessage(g_hwndLog, EM_SCROLLCARET, 0, 0);
-}
-
-void SetStatus(const wchar_t* status) {
-    SendMessage(g_hwndStatus, SB_SETTEXT, 0, (LPARAM)status);
+    PostToWebView({ {"type", "mappings"}, {"mappings", arr} });
 }
 
 // ══════════════════════════════════════════
@@ -322,17 +205,14 @@ void SetStatus(const wchar_t* status) {
 
 void SimulateKeyCombo(int vk, int modifiers) {
     std::vector<INPUT> inputs;
-    // Press modifiers
     if (modifiers & 1) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_CONTROL; inputs.push_back(i); }
     if (modifiers & 2) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_SHIFT; inputs.push_back(i); }
     if (modifiers & 4) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_MENU; inputs.push_back(i); }
-    // Press key via scancode
     UINT sc = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
     INPUT kd = {}; kd.type = INPUT_KEYBOARD; kd.ki.wScan = sc; kd.ki.dwFlags = KEYEVENTF_SCANCODE;
     inputs.push_back(kd);
     INPUT ku = kd; ku.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
     inputs.push_back(ku);
-    // Release modifiers (reverse order)
     if (modifiers & 4) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_MENU; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
     if (modifiers & 2) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_SHIFT; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
     if (modifiers & 1) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_CONTROL; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
@@ -366,31 +246,8 @@ void SimulateScroll(int amount) {
 }
 
 // ══════════════════════════════════════════
-//  Mapping List & Persistence
+//  Mapping Persistence
 // ══════════════════════════════════════════
-
-void UpdateMappingList() {
-    SendMessage(g_hwndMappingList, LB_RESETCONTENT, 0, 0);
-    std::lock_guard<std::mutex> lock(g_mappingsMutex);
-    for (const auto& m : g_mappings) {
-        std::wstringstream ws;
-        if (m.profile_switch >= 0) {
-            ws << (m.midi_type == 0 ? L"Note " : L"CC ") << m.midi_num << L"  ->  [Profile #" << m.profile_switch << L"]";
-        }
-        else if (m.midi_type == 1 && m.cc_action > 0) {
-            const wchar_t* actions[] = { L"", L"MouseX", L"MouseY", L"Scroll", L"HoldKey" };
-            ws << L"CC " << m.midi_num << L"  ->  " << actions[m.cc_action];
-            if (m.cc_action == 4) ws << L"(" << GetKeyName(m.key_vk) << L")";
-        }
-        else {
-            ws << (m.midi_type == 0 ? L"Note " : L"CC ") << m.midi_num << L"  ->  ";
-            ws << GetModifierString(m.modifiers) << GetKeyName(m.key_vk);
-            if (m.vel_zone == 1) ws << L" [soft]";
-            else if (m.vel_zone == 2) ws << L" [hard]";
-        }
-        SendMessage(g_hwndMappingList, LB_ADDSTRING, 0, (LPARAM)ws.str().c_str());
-    }
-}
 
 void SaveMappings(const std::wstring& filename) {
     json j = json::array();
@@ -431,11 +288,11 @@ void LoadMappings(const std::wstring& filename) {
         }
     }
     g_lastProfilePath = filename;
-    UpdateMappingList();
+    SendMappingsToUI();
 }
 
 // ══════════════════════════════════════════
-//  Persistent Config (auto-save/load)
+//  Persistent Config
 // ══════════════════════════════════════════
 
 void SaveConfig() {
@@ -443,17 +300,14 @@ void SaveConfig() {
     cfg["last_port"] = g_lastConnectedPortName;
     cfg["last_profile"] = WideToUtf8(g_lastProfilePath);
     cfg["auto_reconnect"] = g_autoReconnect;
-    // App bindings
     json bindings = json::object();
     for (auto& [exe, profile] : g_appProfileBindings)
         bindings[WideToUtf8(exe)] = WideToUtf8(profile);
     cfg["app_bindings"] = bindings;
-    // Profile slots
     json slots = json::array();
     for (auto& s : g_profileSlots)
         slots.push_back(WideToUtf8(s));
     cfg["profile_slots"] = slots;
-
     std::ofstream f(g_configPath);
     if (f) f << cfg.dump(4);
 }
@@ -463,11 +317,9 @@ void LoadConfig() {
     if (!f) return;
     json cfg;
     try { f >> cfg; } catch (...) { return; }
-
     g_lastConnectedPortName = cfg.value("last_port", "");
     g_lastProfilePath = Utf8ToWide(cfg.value("last_profile", ""));
     g_autoReconnect = cfg.value("auto_reconnect", true);
-
     if (cfg.contains("app_bindings") && cfg["app_bindings"].is_object()) {
         for (auto& [k, v] : cfg["app_bindings"].items())
             g_appProfileBindings[Utf8ToWide(k)] = Utf8ToWide(v.get<std::string>());
@@ -510,81 +362,6 @@ void RestoreFromTray(HWND hwnd) {
 }
 
 // ══════════════════════════════════════════
-//  Piano Roll Window
-// ══════════════════════════════════════════
-
-bool IsBlackKey(int note) {
-    int n = note % 12;
-    return (n == 1 || n == 3 || n == 6 || n == 8 || n == 10);
-}
-
-LRESULT CALLBACK PianoRollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        int w = rc.right - rc.left;
-        int h = rc.bottom - rc.top;
-
-        Bitmap buffer(w, h);
-        Graphics* g = Graphics::FromImage(&buffer);
-        g->SetSmoothingMode(SmoothingModeAntiAlias);
-
-        // Neon Glow background behind keys
-        SolidBrush bgBrush(Color(255, 10, 10, 12));
-        g->FillRectangle(&bgBrush, 0, 0, w, h);
-
-        float keyW = (float)w / PIANO_TOTAL_KEYS;
-        for (int i = 0; i < PIANO_TOTAL_KEYS; i++) {
-            float x1 = i * keyW;
-            float x2 = (i + 1) * keyW;
-
-            Color keyColor;
-            if (g_pianoVelocity[i] > 0) {
-                // Neon Glow effect
-                int intensity = 150 + g_pianoVelocity[i];
-                if (intensity > 255) intensity = 255;
-                Color glowColor = Color(255, 0, intensity, 180);
-                
-                // Draw bloom glow using PathGradientBrush
-                GraphicsPath glowPath;
-                glowPath.AddEllipse((REAL)(x1 - Scale(10)), (REAL)(-Scale(10)), (REAL)((x2 - x1) + Scale(20)), (REAL)(h + Scale(20)));
-                PathGradientBrush pgb(&glowPath);
-                pgb.SetCenterColor(glowColor);
-                Color surroundColors[] = { Color(0, 0, 0, 0) };
-                int count = 1;
-                pgb.SetSurroundColors(surroundColors, &count);
-                g->FillPath(&pgb, &glowPath);
-
-                keyColor = glowColor;
-            }
-            else {
-                keyColor = IsBlackKey(i) ? Color(255, 30, 30, 32) : Color(255, 180, 180, 185);
-            }
-
-            SolidBrush kb(keyColor);
-            g->FillRectangle(&kb, x1 + 1, 2.0f, x2 - x1 - 2, (REAL)h - 4);
-        }
-
-        Graphics graphics(hdc);
-        graphics.DrawImage(&buffer, 0, 0);
-        delete g;
-
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-
-void InvalidatePianoRoll() {
-    if (g_hwndPianoRoll) InvalidateRect(g_hwndPianoRoll, NULL, FALSE);
-}
-
-// ══════════════════════════════════════════
 //  MIDI Callback
 // ══════════════════════════════════════════
 
@@ -601,21 +378,14 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
     // Update Piano Roll
     if (isNoteOn && number >= 0 && number < 128) {
         g_pianoVelocity[number] = velocity;
-        InvalidatePianoRoll();
+        PostToWebView({ {"type", "midi_note"}, {"note", number}, {"velocity", velocity} });
     }
     else if (isNoteOff && number >= 0 && number < 128) {
         g_pianoVelocity[number] = 0;
-        InvalidatePianoRoll();
     }
     if (isCC && number >= 0 && number < 128) {
         g_pianoCC[number] = velocity;
-    }
-
-    // Log only press/CC
-    if (isNoteOn || isCC) {
-        std::stringstream ss;
-        ss << (isNoteOn ? "Note On: " : "CC: ") << number << " (v:" << velocity << ")";
-        AddLog(ss.str());
+        PostToWebView({ {"type", "midi_cc"}, {"cc", number}, {"value", velocity} });
     }
 
     // Learning mode
@@ -623,14 +393,14 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
         if (isNoteOn) {
             g_learn_pending.midi_type = 0;
             g_learn_pending.midi_num = number;
-            AddLog("Now press desired keyboard key to map...");
-            SetStatus(L"Waiting for keyboard key...");
+            PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
+            SendStatus("Waiting for keyboard key...");
         }
         else if (isCC) {
             g_learn_pending.midi_type = 1;
             g_learn_pending.midi_num = number;
-            AddLog("Now press desired keyboard key to map...");
-            SetStatus(L"Waiting for keyboard key...");
+            PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
+            SendStatus("Waiting for keyboard key...");
         }
         return;
     }
@@ -638,7 +408,6 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
     // Execute mappings
     std::lock_guard<std::mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
-        // --- Profile switching ---
         if (m.profile_switch >= 0) {
             if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
                 if (m.profile_switch < (int)g_profileSlots.size()) {
@@ -648,7 +417,6 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
             continue;
         }
 
-        // --- Note mapping ---
         if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
             if (velocity < m.vel_min) continue;
             if (m.vel_zone == 1 && velocity > 63) continue;
@@ -656,23 +424,14 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
             SimulateKeyCombo(m.key_vk, m.modifiers);
         }
 
-        // --- CC mapping ---
         if (m.midi_type == 1 && isCC && number == m.midi_num) {
-            int val = velocity; // 0-127
+            int val = velocity;
             switch (m.cc_action) {
-            case 0: // keypress
-                SimulateKeyCombo(m.key_vk, m.modifiers);
-                break;
-            case 1: // mouse X
-                SimulateMouseMove((val - 64) * 2, 0);
-                break;
-            case 2: // mouse Y
-                SimulateMouseMove(0, (val - 64) * 2);
-                break;
-            case 3: // scroll
-                SimulateScroll((val - 64) * 20);
-                break;
-            case 4: // hold key while above threshold
+            case 0: SimulateKeyCombo(m.key_vk, m.modifiers); break;
+            case 1: SimulateMouseMove((val - 64) * 2, 0); break;
+            case 2: SimulateMouseMove(0, (val - 64) * 2); break;
+            case 3: SimulateScroll((val - 64) * 20); break;
+            case 4:
                 if (val > 63 && !g_ccHoldActive[m.midi_num]) {
                     SimulateHoldKey(m.key_vk, true);
                     g_ccHoldActive[m.midi_num] = true;
@@ -691,46 +450,45 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
 //  MIDI Port Management & Auto-Reconnect
 // ══════════════════════════════════════════
 
-void ScanMidiPorts(HWND hwnd) {
+void ScanMidiPorts() {
     g_ports.clear();
     RtMidiIn tempIn;
     int n = tempIn.getPortCount();
-    SendMessage(g_hwndPorts, CB_RESETCONTENT, 0, 0);
+    json portsArr = json::array();
     for (int i = 0; i < n; ++i) {
         std::string name = tempIn.getPortName(i);
         g_ports.push_back(name);
-        SendMessage(g_hwndPorts, CB_ADDSTRING, 0, (LPARAM)Utf8ToWide(name).c_str());
+        portsArr.push_back(name);
     }
-    if (n > 0) SendMessage(g_hwndPorts, CB_SETCURSEL, 0, 0);
+    PostToWebView({ {"type", "ports"}, {"ports", portsArr} });
 }
 
-void ConnectMidi(HWND hwnd) {
-    int sel = (int)SendMessage(g_hwndPorts, CB_GETCURSEL, 0, 0);
-    if (sel < 0 || sel >= (int)g_ports.size()) return;
+void ConnectMidi(int portIndex) {
+    if (portIndex < 0 || portIndex >= (int)g_ports.size()) return;
     try {
         g_midiIn = std::make_unique<RtMidiIn>();
-        g_midiIn->openPort(sel);
+        g_midiIn->openPort(portIndex);
         g_midiIn->setCallback(&midiCallback);
         g_connected = true;
-        g_lastConnectedPort = sel;
-        g_lastConnectedPortName = g_ports[sel];
-        SetWindowText(g_hwndButton, L"Disconnect");
-        AddLog("Connected to: " + g_ports[sel]);
-        SetStatus(L"Connected.");
+        g_lastConnectedPort = portIndex;
+        g_lastConnectedPortName = g_ports[portIndex];
+        PostToWebView({ {"type", "connected"}, {"portName", g_ports[portIndex]} });
+        SendLog("Connected to: " + g_ports[portIndex]);
+        SendStatus("Connected.");
         SaveConfig();
     }
     catch (RtMidiError& e) {
-        AddLog("Connection failed: " + std::string(e.getMessage()));
+        SendLog("Connection failed: " + std::string(e.getMessage()));
         g_midiIn.reset();
     }
 }
 
-void DisconnectMidi(HWND hwnd) {
+void DisconnectMidi() {
     g_midiIn.reset();
     g_connected = false;
-    SetWindowText(g_hwndButton, L"Connect");
-    AddLog("MIDI disconnected.");
-    SetStatus(L"Disconnected.");
+    PostToWebView({ {"type", "disconnected"} });
+    SendLog("MIDI disconnected.");
+    SendStatus("Disconnected.");
 }
 
 void TryAutoReconnect() {
@@ -739,16 +497,13 @@ void TryAutoReconnect() {
     int n = tempIn.getPortCount();
     for (int i = 0; i < n; i++) {
         if (tempIn.getPortName(i) == g_lastConnectedPortName) {
-            // Port is back, rescan and connect
-            ScanMidiPorts(g_hwndMain);
-            SendMessage(g_hwndPorts, CB_SETCURSEL, i, 0);
-            ConnectMidi(g_hwndMain);
+            ScanMidiPorts();
+            ConnectMidi(i);
             if (g_connected) {
-                AddLog("Auto-reconnected to: " + g_lastConnectedPortName);
-                // Reload last profile
+                SendLog("Auto-reconnected to: " + g_lastConnectedPortName);
                 if (!g_lastProfilePath.empty()) {
                     LoadMappings(g_lastProfilePath);
-                    AddLog("Auto-loaded last profile.");
+                    SendLog("Auto-loaded last profile.");
                 }
             }
             return;
@@ -757,41 +512,12 @@ void TryAutoReconnect() {
 }
 
 // ══════════════════════════════════════════
-//  Other Helpers
+//  Per-App Switching
 // ══════════════════════════════════════════
 
-void ShowAbout(HWND hwnd) {
-    MessageBox(hwnd,
-        L"MIDITypist v2.0\n"
-        L"Modern MIDI-to-Keyboard Mapper\n\n"
-        L"Features:\n"
-        L"• Key combos (Ctrl/Shift/Alt)\n"
-        L"• Velocity zones & thresholds\n"
-        L"• CC-to-mouse/scroll mapping\n"
-        L"• Per-app auto-switching\n"
-        L"• System tray & auto-reconnect\n"
-        L"• Visual MIDI Piano Roll\n\n"
-        L"(C) 2025",
-        L"About MIDITypist", MB_OK | MB_ICONINFORMATION);
-}
-
-void RemoveSelectedMapping() {
-    int sel = (int)SendMessage(g_hwndMappingList, LB_GETCURSEL, 0, 0);
-    {
-        std::lock_guard<std::mutex> lock(g_mappingsMutex);
-        if (sel >= 0 && sel < (int)g_mappings.size())
-            g_mappings.erase(g_mappings.begin() + sel);
-        else return;
-    }
-    AddLog("Mapping removed.");
-    UpdateMappingList();
-    SetStatus(L"Mapping removed.");
-}
-
-void PerAppSwitchMapping() {
-    HWND hwndFg = GetForegroundWindow();
+void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
     DWORD pid = 0;
-    GetWindowThreadProcessId(hwndFg, &pid);
+    GetWindowThreadProcessId(hwnd, &pid);
     HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
     if (hProc) {
         wchar_t exeName[MAX_PATH] = { 0 };
@@ -799,204 +525,171 @@ void PerAppSwitchMapping() {
             std::wstring exe(exeName);
             exe = exe.substr(exe.find_last_of(L"\\") + 1);
             auto it = g_appProfileBindings.find(exe);
-            if (it != g_appProfileBindings.end() && g_lastProfileLoadedForApp != exe) {
+            if (it != g_appProfileBindings.end() && it->second != g_lastProfileLoadedForApp) {
+                g_lastProfileLoadedForApp = it->second;
                 LoadMappings(it->second);
-                AddLog("Switched mappings for app: " + WideToUtf8(exe));
-                SetStatus((std::wstring(L"Auto-loaded for ") + exe).c_str());
-                g_lastProfileLoadedForApp = exe;
+                SendLog("Auto-switched profile for: " + WideToUtf8(exe));
             }
         }
         CloseHandle(hProc);
     }
 }
 
-void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND, LONG, LONG, DWORD, DWORD) {
-    if (event == EVENT_SYSTEM_FOREGROUND) PerAppSwitchMapping();
-}
-
 // ══════════════════════════════════════════
-//  Settings Dialog
+//  Handle messages from WebView2 (JS -> C++)
 // ══════════════════════════════════════════
 
-INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_INITDIALOG:
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_SAVEPROFILE));
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_LOADPROFILE));
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_BINDPROFILE));
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_CLEARLOG));
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_CLEARMAPS));
-        SetUIFont(GetDlgItem(hDlg, IDC_BTN_ABOUT));
-        SetUIFont(GetDlgItem(hDlg, IDCANCEL));
-        return TRUE;
-    case WM_COMMAND:
-        switch (LOWORD(wParam)) {
-        case IDC_BTN_SAVEPROFILE: {
-            wchar_t szFile[MAX_PATH] = L"profile.json";
-            OPENFILENAME ofn = { sizeof(ofn) };
-            ofn.hwndOwner = hDlg;
-            ofn.lpstrFile = szFile;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrTitle = L"Save MIDI Mapping Profile";
-            ofn.lpstrDefExt = L"json";
-            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-            ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
-            if (GetSaveFileName(&ofn)) {
-                SaveMappings(szFile);
-                g_lastProfilePath = szFile;
-                SaveConfig();
-                AddLog("Profile saved.");
-            }
-            break;
-        }
-        case IDC_BTN_LOADPROFILE: {
-            wchar_t szFile[MAX_PATH] = L"";
-            OPENFILENAME ofn = { sizeof(ofn) };
-            ofn.hwndOwner = hDlg;
-            ofn.lpstrFile = szFile;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrTitle = L"Load MIDI Mapping Profile";
-            ofn.lpstrDefExt = L"json";
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-            ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
-            if (GetOpenFileName(&ofn)) {
-                LoadMappings(szFile);
-                SaveConfig();
-                AddLog("Profile loaded.");
-            }
-            break;
-        }
-        case IDC_BTN_BINDPROFILE: {
-            wchar_t szProfile[MAX_PATH] = L"";
-            OPENFILENAME ofn = { sizeof(ofn) };
-            ofn.hwndOwner = hDlg;
-            ofn.lpstrFile = szProfile;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrTitle = L"Choose Profile to Bind";
-            ofn.lpstrDefExt = L"json";
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-            ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
-            if (!GetOpenFileName(&ofn)) break;
+void HandleWebMessage(const std::string& messageStr) {
+    json msg;
+    try { msg = json::parse(messageStr); } catch (...) { return; }
 
-            wchar_t szExe[MAX_PATH] = L"";
-            HWND hwndFg = GetForegroundWindow();
-            DWORD pid = 0;
-            GetWindowThreadProcessId(hwndFg, &pid);
-            HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-            if (hProc) {
-                if (GetModuleFileNameExW(hProc, NULL, szExe, MAX_PATH)) {
-                    std::wstring exeName(szExe);
-                    exeName = exeName.substr(exeName.find_last_of(L"\\") + 1);
-                    g_appProfileBindings[exeName] = szProfile;
-                    SaveConfig();
-                    AddLog("App profile binding stored: " + WideToUtf8(exeName));
-                }
-                CloseHandle(hProc);
-            }
-            break;
-        }
-        case IDC_BTN_CLEARLOG:
-            SetWindowTextA(g_hwndLog, "");
-            AddLog("Log cleared.");
-            break;
-        case IDC_BTN_CLEARMAPS: {
-            std::lock_guard<std::mutex> lock(g_mappingsMutex);
-            g_mappings.clear();
-        }
-            UpdateMappingList();
-            AddLog("All mappings cleared.");
-            break;
-        case IDC_BTN_ABOUT:
-            ShowAbout(hDlg);
-            break;
-        case IDCANCEL:
-            EndDialog(hDlg, 0);
-            break;
-        }
-        break;
-    }
-    return FALSE;
-}
+    std::string action = msg.value("action", "");
 
-// ══════════════════════════════════════════
-//  Main Window Procedure
-// ══════════════════════════════════════════
-
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_CREATE: {
-        g_hwndMain = hwnd;
-        g_dpi = GetDpiForWindow(hwnd);
-        ApplyModernStyle(hwnd);
-
-        int btn_h = Scale(34);
-        g_hwndPorts = CreateWindow(L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_CB_PORTS, g_hInst, nullptr);
-        SetUIFont(g_hwndPorts);
-
-        g_hwndButton = CreateWindow(L"BUTTON", L"Connect", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_CONNECT, g_hInst, nullptr);
-        SetUIFont(g_hwndButton);
-
-        g_hwndLearn = CreateWindow(L"BUTTON", L"Learn Mapping", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LEARN, g_hInst, nullptr);
-        SetUIFont(g_hwndLearn);
-
-        g_hwndSettings = CreateWindow(L"BUTTON", L"Settings", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SETTINGS, g_hInst, nullptr);
-        SetUIFont(g_hwndSettings);
-
-        g_hwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", nullptr,
-            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_LOGBOX, g_hInst, nullptr);
-        SetUIFont(g_hwndLog);
-
-        g_hwndMappingList = CreateWindowEx(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
-            WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL | LBS_EXTENDEDSEL,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_LIST_MAPPINGS, g_hInst, nullptr);
-        SetUIFont(g_hwndMappingList);
-
-        // Register Piano Roll class
-        WNDCLASS pianoWc = {};
-        pianoWc.lpfnWndProc = PianoRollProc;
-        pianoWc.hInstance = g_hInst;
-        pianoWc.lpszClassName = L"MIDITypistPianoRoll";
-        pianoWc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-        RegisterClass(&pianoWc);
-        g_hwndPianoRoll = CreateWindow(L"MIDITypistPianoRoll", nullptr,
-            WS_CHILD | WS_VISIBLE, 20, 420, 1100, PIANO_ROLL_HEIGHT,
-            hwnd, (HMENU)IDC_PIANO_ROLL, g_hInst, nullptr);
-
-        g_hwndStatus = CreateWindow(STATUSCLASSNAME, nullptr,
-            WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
-            0, 0, 0, 0, hwnd, (HMENU)IDC_STATUSBAR, g_hInst, nullptr);
-
-        ScanMidiPorts(hwnd);
-        AddLog("MIDITypist v2.0 Ready.");
-        SetStatus(L"Ready.");
-
-        // Load persistent config
-        g_configPath = GetConfigDir() + L"config.json";
-        LoadConfig();
-
+    if (action == "init") {
+        ScanMidiPorts();
+        SendMappingsToUI();
+        SendStatus("Ready");
         // Auto-connect to last port
         if (!g_lastConnectedPortName.empty()) {
             for (int i = 0; i < (int)g_ports.size(); i++) {
                 if (g_ports[i] == g_lastConnectedPortName) {
-                    SendMessage(g_hwndPorts, CB_SETCURSEL, i, 0);
-                    ConnectMidi(hwnd);
+                    ConnectMidi(i);
                     break;
                 }
             }
         }
-        // Auto-load last profile
         if (!g_lastProfilePath.empty()) {
             LoadMappings(g_lastProfilePath);
-            AddLog("Auto-loaded last profile.");
         }
-        UpdateMappingList();
+    }
+    else if (action == "toggle_connect") {
+        if (!g_connected) {
+            int port = msg.value("port", 0);
+            ConnectMidi(port);
+        } else {
+            DisconnectMidi();
+        }
+    }
+    else if (action == "start_learn") {
+        g_learning = true;
+        g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
+        SendLog("Learning: Press a MIDI note or CC, then a keyboard key.");
+        SendStatus("Waiting for MIDI input...");
+    }
+    else if (action == "cancel_learn") {
+        g_learning = false;
+        g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
+        SendStatus("Learning cancelled.");
+    }
+    else if (action == "learn_key") {
+        if (g_learning && g_learn_pending.midi_type != -1) {
+            int keyCode = msg.value("keyCode", 0);
+            if (keyCode == 0) return;
 
-        // Set up hooks and timers
+            g_learn_pending.key_vk = keyCode;
+            g_learn_pending.modifiers = 0;
+            if (msg.value("ctrlKey", false)) g_learn_pending.modifiers |= 1;
+            if (msg.value("shiftKey", false)) g_learn_pending.modifiers |= 2;
+            if (msg.value("altKey", false)) g_learn_pending.modifiers |= 4;
+
+            {
+                std::lock_guard<std::mutex> lock(g_mappingsMutex);
+                g_mappings.push_back(g_learn_pending);
+            }
+
+            std::wstring displayStr = L"Mapped MIDI ";
+            displayStr += (g_learn_pending.midi_type == 0 ? L"Note" : L"CC");
+            displayStr += L" " + std::to_wstring(g_learn_pending.midi_num);
+            displayStr += L" -> " + GetModifierString(g_learn_pending.modifiers) + GetKeyName(g_learn_pending.key_vk);
+            SendLog(WideToUtf8(displayStr));
+            SendMappingsToUI();
+            SendStatus("Mapped successfully.");
+
+            g_learning = false;
+            PostToWebView({ {"type", "learn_done"} });
+        }
+    }
+    else if (action == "delete_mapping") {
+        int index = msg.value("index", -1);
+        {
+            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            if (index >= 0 && index < (int)g_mappings.size())
+                g_mappings.erase(g_mappings.begin() + index);
+        }
+        SendMappingsToUI();
+        SendLog("Mapping removed.");
+    }
+    else if (action == "clear_mappings") {
+        {
+            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            g_mappings.clear();
+        }
+        SendMappingsToUI();
+        SendLog("All mappings cleared.");
+    }
+    else if (action == "save_profile") {
+        OPENFILENAME ofn = {};
+        wchar_t file[MAX_PATH] = L"mappings.json";
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_hwndMain;
+        ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
+        ofn.lpstrFile = file;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_OVERWRITEPROMPT;
+        ofn.lpstrDefExt = L"json";
+        if (GetSaveFileName(&ofn)) {
+            SaveMappings(file);
+            g_lastProfilePath = file;
+            SaveConfig();
+            SendLog("Profile saved: " + WideToUtf8(file));
+        }
+    }
+    else if (action == "load_profile") {
+        OPENFILENAME ofn = {};
+        wchar_t file[MAX_PATH] = L"";
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = g_hwndMain;
+        ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
+        ofn.lpstrFile = file;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_FILEMUSTEXIST;
+        if (GetOpenFileName(&ofn)) {
+            LoadMappings(file);
+            SaveConfig();
+            SendLog("Profile loaded: " + WideToUtf8(file));
+        }
+    }
+    else if (action == "open_settings") {
+        // For now, show the about box or a placeholder since the old dialog-based settings 
+        // need to be ported to web.
+        MessageBox(g_hwndMain, L"Web-based settings are under construction. Please use the Save/Load profile buttons for now.", L"Settings", MB_OK | MB_ICONINFORMATION);
+    }
+    else if (action == "clear_log") {
+        // Handled in JS, but could do backend cleanup if needed
+    }
+    else if (action == "scan_ports") {
+        ScanMidiPorts();
+    }
+    else if (action == "show_about") {
+        MessageBox(g_hwndMain,
+            L"MIDITypist v3.0\n"
+            L"Modern MIDI-to-Keyboard Mapper\n\n"
+            L"Features:\n"
+            L"\x2022 Hybrid WebView2 Architecture\n"
+            L"\x2022 Premium Glassmorphism UI\n"
+            L"\x2022 Low-latency C++ MIDI Engine\n\n"
+            L"(C) 2026",
+            L"About MIDITypist", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+// ══════════════════════════════════════════
+//  Window Procedure
+// ══════════════════════════════════════════
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE:
         g_hwndMain = hwnd;
         g_hWinEventHook = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
@@ -1004,76 +697,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
         SetTimer(hwnd, RECONNECT_TIMER_ID, RECONNECT_INTERVAL, NULL);
         SetTimer(hwnd, PIANO_DECAY_TIMER, PIANO_DECAY_MS, NULL);
-
         AddTrayIcon(hwnd);
-        LayoutControls(hwnd);
         break;
-    }
     case WM_SIZE:
-        LayoutControls(hwnd);
-        break;
-    case WM_GETMINMAXINFO: {
-        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
-        mmi->ptMinTrackSize.x = 700;
-        mmi->ptMinTrackSize.y = 400;
-        break;
-    }
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDC_BTN_CONNECT) {
-            if (!g_connected) ConnectMidi(hwnd);
-            else DisconnectMidi(hwnd);
-        }
-        else if (LOWORD(wParam) == IDC_BTN_LEARN) {
-            g_learning = true;
-            g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
-            // Detect held modifiers at learn time
-            if (GetKeyState(VK_CONTROL) & 0x8000) g_learn_pending.modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000) g_learn_pending.modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000) g_learn_pending.modifiers |= 4;
-            AddLog("Learning: Press a MIDI note or CC, then a keyboard key. Hold Ctrl/Shift/Alt for combos.");
-            SetStatus(L"Waiting for MIDI input...");
-            SetFocus(hwnd);
-        }
-        else if (LOWORD(wParam) == IDC_BTN_SETTINGS) {
-            DialogBox(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), hwnd, SettingsDlgProc);
-        }
-        else if (LOWORD(wParam) == ID_TRAY_SHOW) {
-            RestoreFromTray(hwnd);
-        }
-        else if (LOWORD(wParam) == ID_TRAY_EXIT) {
-            DestroyWindow(hwnd);
-        }
-        break;
-    case WM_KEYDOWN:
-        if (g_learning && g_learn_pending.midi_type != -1) {
-            // Ignore modifier-only keys
-            if (wParam == VK_CONTROL || wParam == VK_SHIFT || wParam == VK_MENU ||
-                wParam == VK_LCONTROL || wParam == VK_RCONTROL ||
-                wParam == VK_LSHIFT || wParam == VK_RSHIFT ||
-                wParam == VK_LMENU || wParam == VK_RMENU) break;
-
-            g_learn_pending.key_vk = (int)wParam;
-            // Capture current modifier state
-            g_learn_pending.modifiers = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) g_learn_pending.modifiers |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000) g_learn_pending.modifiers |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000) g_learn_pending.modifiers |= 4;
-
-            {
-                std::lock_guard<std::mutex> lock(g_mappingsMutex);
-                g_mappings.push_back(g_learn_pending);
-            }
-            std::wstringstream ws;
-            ws << L"Mapped MIDI " << (g_learn_pending.midi_type == 0 ? L"Note" : L"CC")
-                << L" " << g_learn_pending.midi_num
-                << L" -> " << GetModifierString(g_learn_pending.modifiers) << GetKeyName(g_learn_pending.key_vk);
-            AddLog(WideToUtf8(ws.str()));
-            UpdateMappingList();
-            SetStatus(L"Mapped and saved.");
-            g_learning = false;
-        }
-        if (GetFocus() == g_hwndMappingList && wParam == VK_DELETE) {
-            RemoveSelectedMapping();
+        if (g_controller) {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            g_controller->put_Bounds(rc);
         }
         break;
     case WM_TIMER:
@@ -1081,7 +711,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             TryAutoReconnect();
         }
         else if (wParam == PIANO_DECAY_TIMER) {
-            // Gentle decay for visual effect
             bool changed = false;
             for (int i = 0; i < PIANO_TOTAL_KEYS; i++) {
                 if (g_pianoVelocity[i] > 0) {
@@ -1090,16 +719,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     changed = true;
                 }
             }
-            if (changed) InvalidatePianoRoll();
+            if (changed) {
+                json vel = json::array();
+                for (int i = 0; i < PIANO_TOTAL_KEYS; i++) vel.push_back(g_pianoVelocity[i]);
+                PostToWebView({ {"type", "piano_decay"}, {"velocities", vel} });
+            }
         }
         break;
     case WM_USER + 100: {
-        // Profile switch from MIDI callback
         int slot = (int)wParam;
         if (slot >= 0 && slot < (int)g_profileSlots.size()) {
             LoadMappings(g_profileSlots[slot]);
-            AddLog("Switched to profile slot #" + std::to_string(slot));
-            SetStatus(L"Profile switched via MIDI.");
+            SendLog("Switched to profile slot #" + std::to_string(slot));
+            SendStatus("Profile switched via MIDI.");
         }
         break;
     }
@@ -1119,86 +751,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DestroyMenu(hMenu);
         }
         break;
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        int cw = rc.right - rc.left;
-        int ch = rc.bottom - rc.top;
-
-        Bitmap buffer(cw, ch);
-        Graphics* g = Graphics::FromImage(&buffer);
-        g->SetSmoothingMode(SmoothingModeAntiAlias);
-        g->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
-
-        // 1. Semi-transparent wash for Acrylic/Mica context
-        SolidBrush bgBrush(CLR_GLASS_BG);
-        g->FillRectangle(&bgBrush, 0, 0, cw, ch);
-
-        // 2. Premium Title
-        Font titleFont(L"Segoe UI Variable Display", (REAL)Scale(24), FontStyleBold);
-        SolidBrush textBrush(CLR_TEXT);
-        g->DrawString(L"MIDITypist", -1, &titleFont, PointF((REAL)Scale(24), (REAL)Scale(20)), &textBrush);
-
-        // 3. Floating Cards
-        int pad = Scale(24);
-        int topH = Scale(70);
-        int pianoH = Scale(PIANO_ROLL_HEIGHT);
-        int statusH = Scale(24);
-        int bodyH = ch - topH - pianoH - statusH - (pad * 2);
-        int halfW = (cw - (pad * 3)) / 2;
-
-        DrawGlassCard(*g, Rect(pad, topH + pad, halfW, bodyH), L"SYSTEM LOG");
-        DrawGlassCard(*g, Rect((pad * 2) + halfW, topH + pad, halfW, bodyH), L"KEY MAPPINGS");
-
-        Graphics graphics(hdc);
-        graphics.DrawImage(&buffer, 0, 0);
-        delete g;
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_DRAWITEM: {
-        LPDRAWITEMSTRUCT pDIS = (LPDRAWITEMSTRUCT)lParam;
-        if (pDIS->CtlType == ODT_BUTTON) {
-            BOOL pressed = (pDIS->itemState & ODS_SELECTED);
-            DrawRoundButton(pDIS, pressed ? CLR_ACCENT_HOVER : CLR_ACCENT);
-            return TRUE;
-        }
+    case WM_COMMAND:
+        if (LOWORD(wParam) == ID_TRAY_SHOW) RestoreFromTray(hwnd);
+        else if (LOWORD(wParam) == ID_TRAY_EXIT) DestroyWindow(hwnd);
         break;
-    }
-    case WM_CTLCOLOREDIT: {
-        HDC hdc = (HDC)wParam;
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, ColorToRGB(CLR_TEXT));
-        return (LRESULT)GetStockObject(NULL_BRUSH);
-    }
-    case WM_CTLCOLORLISTBOX: {
-        HDC hdc = (HDC)wParam;
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, ColorToRGB(CLR_TEXT));
-        return (LRESULT)GetStockObject(NULL_BRUSH);
-    }
-    case WM_DPICHANGED: {
-        g_dpi = HIWORD(wParam);
-        RECT* prcNew = (RECT*)lParam;
-        SetWindowPos(hwnd, NULL, prcNew->left, prcNew->top, 
-            prcNew->right - prcNew->left, prcNew->bottom - prcNew->top, 
-            SWP_NOZORDER | SWP_NOACTIVATE);
-        // Regenerate fonts on DPI change
-        if (g_hFontNormal) { DeleteObject(g_hFontNormal); g_hFontNormal = nullptr; }
-        if (g_hFontTitle) { DeleteObject(g_hFontTitle); g_hFontTitle = nullptr; }
-        SetUIFont(g_hwndPorts);
-        SetUIFont(g_hwndButton);
-        SetUIFont(g_hwndLearn);
-        SetUIFont(g_hwndSettings);
-        SetUIFont(g_hwndLog);
-        SetUIFont(g_hwndMappingList);
-        LayoutControls(hwnd);
-        break;
-    }
     case WM_CLOSE:
         MinimizeToTray(hwnd);
         return 0;
@@ -1208,14 +764,110 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         KillTimer(hwnd, PIANO_DECAY_TIMER);
         if (g_hWinEventHook) { UnhookWinEvent(g_hWinEventHook); g_hWinEventHook = nullptr; }
         RemoveTrayIcon();
-        if (g_hFontNormal) DeleteObject(g_hFontNormal);
-        if (g_hFontTitle) DeleteObject(g_hFontTitle);
-        GdiplusShutdown(g_gdiplusToken);
         g_midiIn.reset();
+        g_webview = nullptr;
+        g_controller = nullptr;
         PostQuitMessage(0);
         return 0;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+// ══════════════════════════════════════════
+//  WebView2 Initialization
+// ══════════════════════════════════════════
+
+void InitWebView2(HWND hwnd) {
+    // Determine the path to the 'ui' folder
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    std::wstring exeDir(exePath);
+    exeDir = exeDir.substr(0, exeDir.find_last_of(L"\\") + 1);
+
+    std::wstring uiPath;
+    std::vector<std::wstring> potentialPaths = {
+        exeDir + L"ui",                                 // Local (Installed structure)
+        exeDir + L"..\\..\\MIDI Mapper\\src\\ui",       // Dev (main/x64/Debug -> main/MIDI Mapper/src/ui)
+        exeDir + L"..\\src\\ui",                        // Alternative dev
+        exeDir                                          // Root fallback
+    };
+
+    for (const auto& path : potentialPaths) {
+        std::wstring checkFile = path + L"\\index.html";
+        if (GetFileAttributesW(checkFile.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            uiPath = path;
+            break;
+        }
+    }
+
+    if (uiPath.empty()) {
+        std::wstring msg = L"Could not find 'ui\\index.html' in potential locations.\n\nChecked near:\n" + exeDir + 
+                          L"\n\nPlease ensure the 'ui' folder containing 'index.html' is next to the executable.";
+        MessageBox(hwnd, msg.c_str(), L"MIDITypist Error", MB_ICONERROR);
+        return;
+    }
+
+    CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr,
+        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+            [hwnd, uiPath](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
+                if (FAILED(result) || !env) return result;
+
+                env->CreateCoreWebView2Controller(hwnd,
+                    Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                        [hwnd, uiPath](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+                            if (FAILED(result) || !controller) return result;
+
+                            g_controller = controller;
+                            controller->get_CoreWebView2(&g_webview);
+
+                            // Settings
+                            wil::com_ptr<ICoreWebView2Settings> settings;
+                            g_webview->get_Settings(&settings);
+                            settings->put_IsScriptEnabled(TRUE);
+                            settings->put_AreDefaultScriptDialogsEnabled(TRUE);
+                            settings->put_IsWebMessageEnabled(TRUE);
+                            settings->put_AreDevToolsEnabled(TRUE);
+                            settings->put_IsStatusBarEnabled(FALSE);
+                            settings->put_IsZoomControlEnabled(FALSE);
+
+                            // Virtual Host Mapping (Secure and robust way to load local files)
+                            wil::com_ptr<ICoreWebView2_3> webView3;
+                            if (SUCCEEDED(g_webview->QueryInterface(IID_PPV_ARGS(&webView3)))) {
+                                webView3->SetVirtualHostNameToFolderMapping(
+                                    L"app.miditypist", uiPath.c_str(),
+                                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                            }
+
+                            // Make background transparent
+                            wil::com_ptr<ICoreWebView2Controller2> controller2;
+                            if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller2)))) {
+                                COREWEBVIEW2_COLOR transparent = { 0, 0, 0, 0 };
+                                controller2->put_DefaultBackgroundColor(transparent);
+                            }
+
+                            RECT rc;
+                            GetClientRect(hwnd, &rc);
+                            controller->put_Bounds(rc);
+
+                            g_webview->add_WebMessageReceived(
+                                Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                                    [](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                        wil::unique_cotaskmem_string messageRaw;
+                                        args->TryGetWebMessageAsString(&messageRaw);
+                                        if (messageRaw) {
+                                            HandleWebMessage(WideToUtf8(messageRaw.get()));
+                                        }
+                                        return S_OK;
+                                    }).Get(), nullptr);
+
+                            // Navigate to the virtual domain
+                            g_webview->Navigate(L"https://app.miditypist/index.html");
+
+                            return S_OK;
+                        }).Get());
+
+                return S_OK;
+            }).Get());
 }
 
 // ══════════════════════════════════════════
@@ -1224,11 +876,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    
-    GdiplusStartupInput gdiplusStartupInput;
-    GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
+
+    // Initialize COM for WebView2
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     g_hInst = hInstance;
+    g_configPath = GetConfigDir() + L"midityper_config.json";
+    LoadConfig();
+
     INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_BAR_CLASSES };
     InitCommonControlsEx(&icc);
 
@@ -1237,21 +892,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = CreateSolidBrush(RGB(28, 28, 30));
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClass(&wc);
 
     HWND hwnd = CreateWindowEx(0, CLASS_NAME, L"MIDITypist",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, Scale(1140), Scale(600),
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1140, 640,
         nullptr, nullptr, hInstance, nullptr);
+
+    // Apply dark mode & Mica backdrop
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    int mica = 2;
+    DwmSetWindowAttribute(hwnd, DWMWA_MICA_EFFECT, &mica, sizeof(mica));
+    MARGINS margins = { -1 };
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
+
+    // Initialize WebView2
+    InitWebView2(hwnd);
 
     MSG msg;
     while (GetMessage(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    CoUninitialize();
     return 0;
 }

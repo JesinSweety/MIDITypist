@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIDITypist</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    /* ── Reset & Base ── */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-primary: rgba(28, 28, 30, 0.72);
+      --bg-card: rgba(44, 44, 46, 0.55);
+      --bg-card-hover: rgba(58, 58, 60, 0.6);
+      --bg-input: rgba(118, 118, 128, 0.18);
+      --border-card: rgba(255, 255, 255, 0.08);
+      --border-subtle: rgba(255, 255, 255, 0.05);
+      --accent: #0a84ff;
+      --accent-hover: #409cff;
+      --accent-glow: rgba(10, 132, 255, 0.3);
+      --green: #30d158;
+      --red: #ff453a;
+      --orange: #ff9f0a;
+      --text-primary: rgba(255, 255, 255, 0.92);
+      --text-secondary: rgba(255, 255, 255, 0.55);
+      --text-tertiary: rgba(255, 255, 255, 0.3);
+      --shadow-card: 0 2px 20px rgba(0, 0, 0, 0.3), 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 8px;
+      --transition: 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+
+    html,
+    body {
+      height: 100%;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: transparent;
+      color: var(--text-primary);
+      overflow: hidden;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      backdrop-filter: blur(40px) saturate(180%);
+      -webkit-backdrop-filter: blur(40px) saturate(180%);
+      background: var(--bg-primary);
+    }
+
+    /* ── Title Bar ── */
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px 12px;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+    }
+
+    .titlebar h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      background: linear-gradient(135deg, #fff 0%, rgba(255, 255, 255, 0.7) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .titlebar .subtitle {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-left: 12px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 6px var(--red);
+      transition: all var(--transition);
+    }
+
+    .status-dot.connected {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 0 24px 16px;
+      flex-shrink: 0;
+      align-items: center;
+    }
+
+    .toolbar select {
+      flex: 1;
+      max-width: 280px;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-card);
+      background: var(--bg-input);
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      transition: all var(--transition);
+      -webkit-app-region: no-drag;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.4)' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 30px;
+    }
+
+    .toolbar select:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .toolbar select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .btn {
+      padding: 8px 18px;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition);
+      -webkit-app-region: no-drag;
+      outline: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 1px 8px var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 3px 12px var(--accent-glow);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+
+    .btn-secondary {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-card);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .btn-danger {
+      background: rgba(255, 69, 58, 0.15);
+      color: var(--red);
+      border: 1px solid rgba(255, 69, 58, 0.2);
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 69, 58, 0.25);
+    }
+
+    .btn-learn {
+      background: linear-gradient(135deg, #ff9f0a 0%, #ff6723 100%);
+      color: white;
+      box-shadow: 0 1px 8px rgba(255, 159, 10, 0.3);
+    }
+
+    .btn-learn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 12px rgba(255, 159, 10, 0.4);
+    }
+
+    .btn-learn.active {
+      animation: pulse-learn 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-learn {
+
+      0%,
+      100% {
+        box-shadow: 0 0 8px rgba(255, 159, 10, 0.3);
+      }
+
+      50% {
+        box-shadow: 0 0 20px rgba(255, 159, 10, 0.6);
+      }
+    }
+
+    /* ── Main Content ── */
+    .content {
+      display: flex;
+      gap: 12px;
+      padding: 0 24px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+      transition: border-color var(--transition);
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+
+    .card-header h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-secondary);
+    }
+
+    .card-header .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--bg-input);
+      color: var(--text-secondary);
+    }
+
+    .card-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+      min-height: 0;
+    }
+
+    /* Scrollbar */
+    .card-body::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .card-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .card-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 3px;
+    }
+
+    .card-body::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Log Entries */
+    .log-entry {
+      padding: 6px 18px;
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--text-secondary);
+      font-family: 'SF Mono', 'Menlo', 'Cascadia Code', monospace;
+      line-height: 1.5;
+      border-bottom: 1px solid transparent;
+      transition: background var(--transition);
+    }
+
+    .log-entry:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .log-entry .timestamp {
+      color: var(--text-tertiary);
+      margin-right: 8px;
+      font-size: 10px;
+    }
+
+    .log-entry.midi-note {
+      color: var(--accent);
+    }
+
+    .log-entry.midi-cc {
+      color: var(--orange);
+    }
+
+    .log-entry.system {
+      color: var(--green);
+    }
+
+    /* Mapping List */
+    .mapping-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      transition: background var(--transition);
+      cursor: default;
+    }
+
+    .mapping-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .mapping-item:last-child {
+      border-bottom: none;
+    }
+
+    .mapping-item .source {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .mapping-item .arrow {
+      color: var(--text-tertiary);
+      margin: 0 10px;
+      font-size: 12px;
+    }
+
+    .mapping-item .target {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    .mapping-item .zone-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 8px;
+      text-transform: uppercase;
+    }
+
+    .zone-badge.soft {
+      background: rgba(48, 209, 88, 0.15);
+      color: var(--green);
+    }
+
+    .zone-badge.hard {
+      background: rgba(255, 69, 58, 0.15);
+      color: var(--red);
+    }
+
+    .mapping-item .delete-btn {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      font-size: 14px;
+      transition: all var(--transition);
+      -webkit-app-region: no-drag;
+    }
+
+    .mapping-item:hover .delete-btn {
+      opacity: 0.6;
+    }
+
+    .mapping-item .delete-btn:hover {
+      opacity: 1;
+      background: rgba(255, 69, 58, 0.12);
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-tertiary);
+      font-size: 13px;
+      gap: 8px;
+    }
+
+    .empty-state .icon {
+      font-size: 32px;
+      opacity: 0.4;
+    }
+
+    /* ── Piano Roll ── */
+    .piano-roll {
+      margin: 12px 24px;
+      height: 56px;
+      border-radius: var(--radius-md);
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-card);
+      display: flex;
+      align-items: flex-end;
+      overflow: hidden;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .piano-key {
+      flex: 1;
+      min-width: 0;
+      transition: background 0.08s ease;
+      position: relative;
+    }
+
+    .piano-key.white {
+      height: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border-right: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .piano-key.black {
+      height: 65%;
+      background: rgba(0, 0, 0, 0.4);
+      border-right: 1px solid rgba(0, 0, 0, 0.2);
+      z-index: 1;
+    }
+
+    .piano-key.active {
+      background: var(--accent) !important;
+      box-shadow: 0 0 16px var(--accent-glow), 0 0 4px var(--accent) inset;
+    }
+
+    /* ── Status Bar ── */
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 24px 12px;
+      flex-shrink: 0;
+    }
+
+    .statusbar .status-text {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+    }
+
+    .statusbar .actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mini-btn {
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-card);
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition);
+      -webkit-app-region: no-drag;
+    }
+
+    .statusbar .mini-btn:hover {
+      background: var(--bg-input);
+      color: var(--text-primary);
+    }
+
+    /* ── Learning Overlay ── */
+    .learn-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .learn-overlay.active {
+      display: flex;
+    }
+
+    .learn-overlay .learn-prompt {
+      font-size: 18px;
+      font-weight: 600;
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .learn-overlay .learn-sub {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .learn-overlay .cancel-btn {
+      margin-top: 12px;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* ── Animations ── */
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .log-entry {
+      animation: slideIn 0.15s ease;
+    }
+
+    .mapping-item {
+      animation: slideIn 0.2s ease;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Title Bar -->
+  <div class="titlebar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <h1>MIDITypist</h1>
+      <span class="subtitle">v3.0</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="connectionLabel" style="font-size:11px;font-weight:500;color:var(--text-tertiary);">Disconnected</span>
+      <div id="statusDot" class="status-dot"></div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div style="display:flex; gap:6px; flex:1; max-width:320px;">
+      <select id="portSelect" style="flex:1;">
+        <option value="">No MIDI ports found</option>
+      </select>
+      <button class="mini-btn" onclick="refreshPorts()" title="Refresh Ports" style="height:32px;">🔄</button>
+    </div>
+    <button id="btnConnect" class="btn btn-primary" onclick="toggleConnect()">Connect</button>
+    <button id="btnLearn" class="btn btn-learn" onclick="startLearn()">⚡ Learn</button>
+    <button id="btnSettings" class="btn btn-secondary" onclick="openSettings()">⚙ Settings</button>
+    <div style="flex:1;"></div>
+    <button class="btn btn-secondary" onclick="saveProfile()">Save</button>
+    <button class="btn btn-secondary" onclick="loadProfile()">Load</button>
+    <button class="btn btn-secondary" onclick="showAbout()">ⓘ</button>
+  </div>
+
+  <!-- Main Content -->
+  <div class="content">
+    <!-- Log Card -->
+    <div class="card">
+      <div class="card-header">
+        <h2>System Log</h2>
+        <div style="display:flex;gap:6px;">
+          <span id="logCount" class="badge">0</span>
+        </div>
+      </div>
+      <div id="logBody" class="card-body">
+        <div class="empty-state">
+          <div class="icon">🎹</div>
+          <span>Connect a MIDI device to begin</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mappings Card -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Key Mappings</h2>
+        <span id="mapCount" class="badge">0</span>
+      </div>
+      <div id="mapBody" class="card-body">
+        <div class="empty-state">
+          <div class="icon">🔗</div>
+          <span>Click <strong>Learn</strong> to create mappings</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Piano Roll -->
+  <div id="pianoRoll" class="piano-roll"></div>
+
+  <!-- Status Bar -->
+  <div class="statusbar">
+    <span id="statusText" class="status-text">Ready</span>
+    <div class="actions">
+      <button class="mini-btn" onclick="clearLog()">Clear Log</button>
+      <button class="mini-btn" onclick="clearMappings()">Clear Maps</button>
+    </div>
+  </div>
+
+  <!-- Learning Overlay -->
+  <div id="learnOverlay" class="learn-overlay">
+    <div id="learnPrompt" class="learn-prompt">Press a MIDI note or CC...</div>
+    <div class="learn-sub">Then press the keyboard key you want to map to</div>
+    <button class="btn btn-secondary cancel-btn" onclick="cancelLearn()">Cancel</button>
+  </div>
+
+  <script>
+    // ── Piano Roll Setup ──
+    const pianoRoll = document.getElementById('pianoRoll');
+    const TOTAL_KEYS = 128;
+    const pianoKeys = [];
+
+    // Build piano keys
+    for (let i = 0; i < TOTAL_KEYS; i++) {
+      const key = document.createElement('div');
+      const n = i % 12;
+      const isBlack = [1, 3, 6, 8, 10].includes(n);
+      key.className = `piano-key ${isBlack ? 'black' : 'white'}`;
+      key.dataset.note = i;
+      pianoRoll.appendChild(key);
+      pianoKeys.push(key);
+    }
+
+    // ── State ──
+    let logEntries = 0;
+    let isLearning = false;
+
+    // ── Send message to C++ backend ──
+    function sendToBackend(action, data = {}) {
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify({ action, ...data }));
+      }
+    }
+
+    // ── Receive messages from C++ backend ──
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.addEventListener('message', (event) => {
+        let msg;
+        try {
+          msg = (typeof event.data === 'string') ? JSON.parse(event.data) : event.data;
+        } catch (e) {
+          console.error("Message parse error:", e, event.data);
+          return;
+        }
+        handleBackendMessage(msg);
+      });
+    }
+
+    function handleBackendMessage(msg) {
+      switch (msg.type) {
+        case 'ports':
+          updatePorts(msg.ports);
+          break;
+        case 'connected':
+          setConnected(true, msg.portName);
+          break;
+        case 'disconnected':
+          setConnected(false);
+          break;
+        case 'log':
+          addLog(msg.text, msg.category || 'system');
+          break;
+        case 'midi_note':
+          activatePianoKey(msg.note, msg.velocity);
+          addLog(`Note ${msg.note} (velocity: ${msg.velocity})`, 'midi-note');
+          break;
+        case 'midi_cc':
+          addLog(`CC ${msg.cc} (value: ${msg.value})`, 'midi-cc');
+          break;
+        case 'mappings':
+          updateMappings(msg.mappings);
+          break;
+        case 'learn_phase':
+          updateLearnPhase(msg.phase, msg.text);
+          break;
+        case 'learn_done':
+          endLearn();
+          break;
+        case 'status':
+          setStatus(msg.text);
+          break;
+        case 'piano_decay':
+          decayPianoKeys(msg.velocities);
+          break;
+      }
+    }
+
+    // ── UI Functions ──
+    function updatePorts(ports) {
+      const sel = document.getElementById('portSelect');
+      sel.innerHTML = '';
+      if (ports.length === 0) {
+        sel.innerHTML = '<option value="">No MIDI ports found</option>';
+        return;
+      }
+      ports.forEach((p, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = p;
+        sel.appendChild(opt);
+      });
+    }
+
+    function setConnected(connected, portName) {
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('connectionLabel');
+      const btn = document.getElementById('btnConnect');
+      if (connected) {
+        dot.classList.add('connected');
+        label.textContent = portName || 'Connected';
+        label.style.color = 'var(--green)';
+        btn.textContent = 'Disconnect';
+      } else {
+        dot.classList.remove('connected');
+        label.textContent = 'Disconnected';
+        label.style.color = 'var(--text-tertiary)';
+        btn.textContent = 'Connect';
+      }
+    }
+
+    function addLog(text, category) {
+      const body = document.getElementById('logBody');
+      // Remove empty state
+      const empty = body.querySelector('.empty-state');
+      if (empty) empty.remove();
+
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${category}`;
+      const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      entry.innerHTML = `<span class="timestamp">${time}</span>${escapeHtml(text)}`;
+      body.appendChild(entry);
+      body.scrollTop = body.scrollHeight;
+
+      logEntries++;
+      document.getElementById('logCount').textContent = logEntries;
+    }
+
+    function updateMappings(mappings) {
+      const body = document.getElementById('mapBody');
+      body.innerHTML = '';
+      document.getElementById('mapCount').textContent = mappings.length;
+
+      if (mappings.length === 0) {
+        body.innerHTML = '<div class="empty-state"><div class="icon">🔗</div><span>Click <strong>Learn</strong> to create mappings</span></div>';
+        return;
+      }
+
+      mappings.forEach((m, i) => {
+        const item = document.createElement('div');
+        item.className = 'mapping-item';
+
+        let sourceText = (m.midi_type === 0 ? 'Note ' : 'CC ') + m.midi_num;
+        let targetText = m.target_display || 'Key';
+        let zoneBadge = '';
+        if (m.vel_zone === 1) zoneBadge = '<span class="zone-badge soft">soft</span>';
+        else if (m.vel_zone === 2) zoneBadge = '<span class="zone-badge hard">hard</span>';
+
+        item.innerHTML = `
+      <div style="display:flex;align-items:center;">
+        <span class="source">${escapeHtml(sourceText)}</span>
+        <span class="arrow">→</span>
+        <span class="target">${escapeHtml(targetText)}</span>
+        ${zoneBadge}
+      </div>
+      <button class="delete-btn" onclick="deleteMapping(${i})">✕</button>
+    `;
+        body.appendChild(item);
+      });
+    }
+
+    function activatePianoKey(note, velocity) {
+      if (note >= 0 && note < TOTAL_KEYS) {
+        pianoKeys[note].classList.add('active');
+        pianoKeys[note].style.boxShadow = `0 0 ${Math.min(velocity / 3, 20)}px var(--accent-glow), 0 0 4px var(--accent) inset`;
+        setTimeout(() => {
+          pianoKeys[note].classList.remove('active');
+          pianoKeys[note].style.boxShadow = '';
+        }, 300);
+      }
+    }
+
+    function decayPianoKeys(velocities) {
+      for (let i = 0; i < TOTAL_KEYS && i < velocities.length; i++) {
+        if (velocities[i] > 0) {
+          pianoKeys[i].classList.add('active');
+          const intensity = velocities[i] / 127;
+          pianoKeys[i].style.opacity = 0.3 + intensity * 0.7;
+        } else {
+          pianoKeys[i].classList.remove('active');
+          pianoKeys[i].style.opacity = '';
+        }
+      }
+    }
+
+    function updateLearnPhase(phase, text) {
+      document.getElementById('learnPrompt').textContent = text;
+    }
+
+    // ── Actions ──
+    function toggleConnect() {
+      const sel = document.getElementById('portSelect');
+      sendToBackend('toggle_connect', { port: parseInt(sel.value) || 0 });
+    }
+
+    function startLearn() {
+      isLearning = true;
+      document.getElementById('learnOverlay').classList.add('active');
+      document.getElementById('btnLearn').classList.add('active');
+      sendToBackend('start_learn');
+    }
+
+    function endLearn() {
+      isLearning = false;
+      document.getElementById('learnOverlay').classList.remove('active');
+      document.getElementById('btnLearn').classList.remove('active');
+    }
+
+    function cancelLearn() {
+      sendToBackend('cancel_learn');
+      endLearn();
+    }
+
+    function deleteMapping(index) {
+      sendToBackend('delete_mapping', { index });
+    }
+
+    function clearLog() {
+      const body = document.getElementById('logBody');
+      body.innerHTML = '<div class="empty-state"><div class="icon">🎹</div><span>Log cleared</span></div>';
+      logEntries = 0;
+      document.getElementById('logCount').textContent = '0';
+      sendToBackend('clear_log');
+    }
+
+    function clearMappings() {
+      sendToBackend('clear_mappings');
+    }
+
+    function saveProfile() {
+      sendToBackend('save_profile');
+    }
+
+    function loadProfile() {
+      sendToBackend('load_profile');
+    }
+
+    function openSettings() {
+      sendToBackend('open_settings');
+    }
+
+    function showAbout() {
+      sendToBackend('show_about');
+    }
+
+    function setStatus(text) {
+      document.getElementById('statusText').textContent = text;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ── Keyboard handler for learning ──
+    document.addEventListener('keydown', (e) => {
+      if (isLearning) {
+        // Ignore modifier-only keys
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+        sendToBackend('learn_key', {
+          key: e.key,
+          keyCode: e.keyCode,
+          ctrlKey: e.ctrlKey,
+          shiftKey: e.shiftKey,
+          altKey: e.altKey
+        });
+      }
+    });
+
+    function refreshPorts() {
+      sendToBackend('scan_ports');
+    }
+
+    // Request initial data
+    sendToBackend('init');
+  </script>
+</body>
+
+</html>
