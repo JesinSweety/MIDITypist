@@ -60,19 +60,23 @@ using namespace Gdiplus;
 #define PIANO_DECAY_MS 50
 
 // ── Colors ──
-// ── Rich Aesthetics ──
-COLORREF CLR_BG = RGB(20, 20, 22);
-COLORREF CLR_ACCENT = RGB(0, 120, 212);
-COLORREF CLR_ACCENT_HOVER = RGB(30, 150, 240);
-COLORREF CLR_CARD = RGB(32, 32, 34);
-COLORREF CLR_BORDER = RGB(60, 60, 64);
-COLORREF CLR_TEXT = RGB(240, 240, 245);
-COLORREF CLR_TEXT_DIM = RGB(160, 160, 170);
+// ── Rich Aesthetics (Glassmorphism) ──
+Color CLR_GLASS_BG(200, 15, 15, 18);        // Semi-transparent base
+Color CLR_GLASS_CARD(40, 255, 255, 255);    // Very thin glass
+Color CLR_GLASS_BORDER(60, 255, 255, 255);  // Subtle glass edge
+Color CLR_ACCENT(255, 0, 120, 212);         // Bright blue
+Color CLR_ACCENT_HOVER(255, 30, 150, 240);  // Hover blue
+Color CLR_TEXT(255, 245, 245, 250);         // Text color
+Color CLR_TEXT_DIM(180, 200, 200, 210);     // Dimmed text
 
 ULONG_PTR g_gdiplusToken;
 int g_dpi = 96;
 
 int Scale(int p) { return MulDiv(p, g_dpi, 96); }
+
+COLORREF ColorToRGB(Color c) {
+    return RGB(c.GetR(), c.GetG(), c.GetB());
+}
 
 using json = nlohmann::json;
 
@@ -205,8 +209,99 @@ void SetUIFont(HWND hwnd, bool isTitle = false) {
 void ApplyModernStyle(HWND hwnd) {
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    int mica = 1;
+    
+    // Mica Alt (Windows 11)
+    int mica = 2; 
     DwmSetWindowAttribute(hwnd, DWMWA_MICA_EFFECT, &mica, sizeof(mica));
+
+    // Extend frame for total glass effect
+    MARGINS margins = { -1 };
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
+
+void DrawGlassCard(Graphics& g, Rect r, const wchar_t* title) {
+    int radius = Scale(16);
+    GraphicsPath path;
+    path.AddArc(r.X, r.Y, radius, radius, 180, 90);
+    path.AddArc(r.X + r.Width - radius, r.Y, radius, radius, 270, 90);
+    path.AddArc(r.X + r.Width - radius, r.Y + r.Height - radius, radius, radius, 0, 90);
+    path.AddArc(r.X, r.Y + r.Height - radius, radius, radius, 90, 90);
+    path.CloseFigure();
+
+    // Translucent fill
+    SolidBrush cardBrush(CLR_GLASS_CARD);
+    g.FillPath(&cardBrush, &path);
+
+    // Subtle edge highlight
+    Pen glassPen(CLR_GLASS_BORDER, 1.2f);
+    g.DrawPath(&glassPen, &path);
+
+    if (title) {
+        Font font(L"Segoe UI Variable Display", (REAL)Scale(10), FontStyleBold);
+        SolidBrush textBrush(CLR_TEXT_DIM);
+        g.DrawString(title, -1, &font, PointF((REAL)r.X + 18, (REAL)r.Y + 12), &textBrush);
+    }
+}
+
+void DrawRoundButton(LPDRAWITEMSTRUCT pDIS, Color baseColor) {
+    Graphics g(pDIS->hDC);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+
+    Rect r(0, 0, pDIS->rcItem.right, pDIS->rcItem.bottom);
+    int radius = Scale(10);
+
+    GraphicsPath path;
+    path.AddArc(r.X, r.Y, radius, radius, 180, 90);
+    path.AddArc(r.X + r.Width - radius, r.Y, radius, radius, 270, 90);
+    path.AddArc(r.X + r.Width - radius, r.Y + r.Height - radius, radius, radius, 0, 90);
+    path.AddArc(r.X, r.Y + r.Height - radius, radius, radius, 90, 90);
+    path.CloseFigure();
+
+    // Linear Gradient
+    LinearGradientBrush brush(r, baseColor, Color(255, 
+        (int)(baseColor.GetR() * 0.7), (int)(baseColor.GetG() * 0.7), (int)(baseColor.GetB() * 0.7)), 
+        LinearGradientModeVertical);
+    g.FillPath(&brush, &path);
+
+    // Inner glow
+    Pen shinePen(Color(120, 255, 255, 255), 1.0f);
+    g.DrawPath(&shinePen, &path);
+
+    wchar_t text[64];
+    GetWindowText(pDIS->hwndItem, text, 64);
+    StringFormat format;
+    format.SetAlignment(StringAlignmentCenter);
+    format.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush textBrush(Color(255, 255, 255, 255));
+    Font font(pDIS->hDC);
+    RectF rectF((REAL)r.X, (REAL)r.Y, (REAL)r.Width, (REAL)r.Height);
+    g.DrawString(text, -1, &font, rectF, &format, &textBrush);
+}
+
+void LayoutControls(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int cw = rc.right - rc.left;
+    int ch = rc.bottom - rc.top;
+
+    int pad = Scale(24);
+    int topH = Scale(70);
+    int pianoH = Scale(PIANO_ROLL_HEIGHT);
+    int statusH = Scale(24);
+    int bodyH = ch - topH - pianoH - statusH - (pad * 2);
+    int halfW = (cw - (pad * 3)) / 2;
+
+    int btnY = Scale(25);
+    MoveWindow(g_hwndPorts, pad, btnY, Scale(220), Scale(34), TRUE);
+    MoveWindow(g_hwndButton, pad + Scale(230), btnY, Scale(120), Scale(34), TRUE);
+    MoveWindow(g_hwndLearn, pad + Scale(360), btnY, Scale(150), Scale(34), TRUE);
+    MoveWindow(g_hwndSettings, pad + Scale(520), btnY, Scale(120), Scale(34), TRUE);
+
+    // Offset edit/listbox slightly to sit inside the glassy card
+    MoveWindow(g_hwndLog, pad + Scale(8), topH + pad + Scale(32), halfW - Scale(16), bodyH - Scale(42), TRUE);
+    MoveWindow(g_hwndMappingList, (pad * 2) + halfW + Scale(8), topH + pad + Scale(32), halfW - Scale(16), bodyH - Scale(42), TRUE);
+    MoveWindow(g_hwndPianoRoll, pad, ch - pianoH - statusH - pad, cw - (pad * 2), pianoH, TRUE);
+    if (g_hwndStatus) SendMessage(g_hwndStatus, WM_SIZE, 0, 0);
 }
 
 void AddLog(const std::string& msg) {
@@ -434,38 +529,44 @@ LRESULT CALLBACK PianoRollProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         int w = rc.right - rc.left;
         int h = rc.bottom - rc.top;
 
-        // Double buffer for zero flicker
         Bitmap buffer(w, h);
         Graphics* g = Graphics::FromImage(&buffer);
         g->SetSmoothingMode(SmoothingModeAntiAlias);
 
-        // Dark background
-        SolidBrush bgBrush(Color(255, 20, 20, 24));
+        // Neon Glow background behind keys
+        SolidBrush bgBrush(Color(255, 10, 10, 12));
         g->FillRectangle(&bgBrush, 0, 0, w, h);
 
-        // Draw keys
         float keyW = (float)w / PIANO_TOTAL_KEYS;
         for (int i = 0; i < PIANO_TOTAL_KEYS; i++) {
             float x1 = i * keyW;
             float x2 = (i + 1) * keyW;
 
-            Color color;
+            Color keyColor;
             if (g_pianoVelocity[i] > 0) {
-                int velG = 80 + g_pianoVelocity[i];
-                if (velG > 255) velG = 255;
-                color = Color(255, 40, velG, 80);
+                // Neon Glow effect
+                int intensity = 150 + g_pianoVelocity[i];
+                if (intensity > 255) intensity = 255;
+                Color glowColor = Color(255, 0, intensity, 180);
+                
+                // Draw bloom glow using PathGradientBrush
+                GraphicsPath glowPath;
+                glowPath.AddEllipse((REAL)(x1 - Scale(10)), (REAL)(-Scale(10)), (REAL)((x2 - x1) + Scale(20)), (REAL)(h + Scale(20)));
+                PathGradientBrush pgb(&glowPath);
+                pgb.SetCenterColor(glowColor);
+                Color surroundColors[] = { Color(0, 0, 0, 0) };
+                int count = 1;
+                pgb.SetSurroundColors(surroundColors, &count);
+                g->FillPath(&pgb, &glowPath);
+
+                keyColor = glowColor;
             }
             else {
-                color = IsBlackKey(i) ? Color(255, 40, 40, 44) : Color(255, 220, 220, 225);
+                keyColor = IsBlackKey(i) ? Color(255, 30, 30, 32) : Color(255, 180, 180, 185);
             }
 
-            SolidBrush kb(color);
-            g->FillRectangle(&kb, x1, 0.0f, x2 - x1, (REAL)h);
-
-            if (!IsBlackKey(i)) {
-                Pen pen(Color(255, 60, 60, 64), 1.0f);
-                g->DrawLine(&pen, x2, 0.0f, x2, (REAL)h);
-            }
+            SolidBrush kb(keyColor);
+            g->FillRectangle(&kb, x1 + 1, 2.0f, x2 - x1 - 2, (REAL)h - 4);
         }
 
         Graphics graphics(hdc);
@@ -821,63 +922,6 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPar
 //  Main Window Procedure
 // ══════════════════════════════════════════
 
-void LayoutControls(HWND hwnd) {
-    RECT rc;
-    GetClientRect(hwnd, &rc);
-    int cw = rc.right - rc.left;
-    int ch = rc.bottom - rc.top;
-
-    int pad = Scale(20);
-    int topH = Scale(60);
-    int pianoH = Scale(PIANO_ROLL_HEIGHT);
-    int statusH = Scale(24);
-    int bodyH = ch - topH - pianoH - statusH - (pad * 2);
-    int halfW = (cw - (pad * 3)) / 2;
-
-    MoveWindow(g_hwndPorts, pad, pad, Scale(220), Scale(34), TRUE);
-    MoveWindow(g_hwndButton, pad + Scale(230), pad, Scale(120), Scale(34), TRUE);
-    MoveWindow(g_hwndLearn, pad + Scale(360), pad, Scale(150), Scale(34), TRUE);
-    MoveWindow(g_hwndSettings, pad + Scale(520), pad, Scale(120), Scale(34), TRUE);
-
-    MoveWindow(g_hwndLog, pad, topH + pad, halfW, bodyH, TRUE);
-    MoveWindow(g_hwndMappingList, (pad * 2) + halfW, topH + pad, halfW, bodyH, TRUE);
-    MoveWindow(g_hwndPianoRoll, pad, ch - pianoH - statusH - pad, cw - (pad * 2), pianoH, TRUE);
-    if (g_hwndStatus) SendMessage(g_hwndStatus, WM_SIZE, 0, 0);
-}
-
-void DrawRoundButton(LPDRAWITEMSTRUCT pDIS, COLORREF color) {
-    Graphics g(pDIS->hDC);
-    g.SetSmoothingMode(SmoothingModeAntiAlias);
-
-    RECT rc = pDIS->rcItem;
-    int w = rc.right - rc.left;
-    int h = rc.bottom - rc.top;
-    int r = Scale(8);
-
-    GraphicsPath path;
-    path.AddArc(0, 0, r, r, 180, 90);
-    path.AddArc(w - r - 1, 0, r, r, 270, 90);
-    path.AddArc(w - r - 1, h - r - 1, r, r, 0, 90);
-    path.AddArc(0, h - r - 1, r, r, 90, 90);
-    path.CloseFigure();
-
-    SolidBrush brush(Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
-    g.FillPath(&brush, &path);
-
-    // Text
-    wchar_t text[64];
-    GetWindowText(pDIS->hwndItem, text, 64);
-    
-    StringFormat format;
-    format.SetAlignment(StringAlignmentCenter);
-    format.SetLineAlignment(StringAlignmentCenter);
-    
-    SolidBrush textBrush(Color(255, 255, 255, 255));
-    Font font(pDIS->hDC);
-    RectF rectF(0, 0, (REAL)w, (REAL)h);
-    g.DrawString(text, -1, &font, rectF, &format, &textBrush);
-}
-
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE: {
@@ -1075,6 +1119,47 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DestroyMenu(hMenu);
         }
         break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        int cw = rc.right - rc.left;
+        int ch = rc.bottom - rc.top;
+
+        Bitmap buffer(cw, ch);
+        Graphics* g = Graphics::FromImage(&buffer);
+        g->SetSmoothingMode(SmoothingModeAntiAlias);
+        g->SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+
+        // 1. Semi-transparent wash for Acrylic/Mica context
+        SolidBrush bgBrush(CLR_GLASS_BG);
+        g->FillRectangle(&bgBrush, 0, 0, cw, ch);
+
+        // 2. Premium Title
+        Font titleFont(L"Segoe UI Variable Display", (REAL)Scale(24), FontStyleBold);
+        SolidBrush textBrush(CLR_TEXT);
+        g->DrawString(L"MIDITypist", -1, &titleFont, PointF((REAL)Scale(24), (REAL)Scale(20)), &textBrush);
+
+        // 3. Floating Cards
+        int pad = Scale(24);
+        int topH = Scale(70);
+        int pianoH = Scale(PIANO_ROLL_HEIGHT);
+        int statusH = Scale(24);
+        int bodyH = ch - topH - pianoH - statusH - (pad * 2);
+        int halfW = (cw - (pad * 3)) / 2;
+
+        DrawGlassCard(*g, Rect(pad, topH + pad, halfW, bodyH), L"SYSTEM LOG");
+        DrawGlassCard(*g, Rect((pad * 2) + halfW, topH + pad, halfW, bodyH), L"KEY MAPPINGS");
+
+        Graphics graphics(hdc);
+        graphics.DrawImage(&buffer, 0, 0);
+        delete g;
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT pDIS = (LPDRAWITEMSTRUCT)lParam;
         if (pDIS->CtlType == ODT_BUTTON) {
@@ -1086,26 +1171,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_CTLCOLOREDIT: {
         HDC hdc = (HDC)wParam;
-        SetBkColor(hdc, CLR_CARD); 
-        SetTextColor(hdc, CLR_TEXT);
-        static HBRUSH logBrush = CreateSolidBrush(CLR_CARD);
-        return (LRESULT)logBrush;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, ColorToRGB(CLR_TEXT));
+        return (LRESULT)GetStockObject(NULL_BRUSH);
     }
     case WM_CTLCOLORLISTBOX: {
         HDC hdc = (HDC)wParam;
-        SetBkColor(hdc, CLR_CARD);
-        SetTextColor(hdc, CLR_TEXT);
-        static HBRUSH listBrush = CreateSolidBrush(CLR_CARD);
-        return (LRESULT)listBrush;
-    }
-    case WM_ERASEBKGND: {
-        HDC hdc = (HDC)wParam;
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        HBRUSH hBg = CreateSolidBrush(CLR_BG);
-        FillRect(hdc, &rc, hBg);
-        DeleteObject(hBg);
-        return 1;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, ColorToRGB(CLR_TEXT));
+        return (LRESULT)GetStockObject(NULL_BRUSH);
     }
     case WM_DPICHANGED: {
         g_dpi = HIWORD(wParam);
