@@ -95,8 +95,9 @@ std::wstring g_lastProfilePath;
 int g_pianoVelocity[PIANO_TOTAL_KEYS] = { 0 };
 int g_pianoCC[128] = { 0 };
 
-// ── Auto Reconnect ──
+// ── Auto Reconnect & App Switching ──
 bool g_autoReconnect = true;
+bool g_appSwitchingEnabled = true;
 
 // ── Profile Slots for MIDI switching ──
 std::vector<std::wstring> g_profileSlots;
@@ -300,6 +301,7 @@ void SaveConfig() {
     cfg["last_port"] = g_lastConnectedPortName;
     cfg["last_profile"] = WideToUtf8(g_lastProfilePath);
     cfg["auto_reconnect"] = g_autoReconnect;
+    cfg["app_switching_enabled"] = g_appSwitchingEnabled;
     json bindings = json::object();
     for (auto& [exe, profile] : g_appProfileBindings)
         bindings[WideToUtf8(exe)] = WideToUtf8(profile);
@@ -320,6 +322,7 @@ void LoadConfig() {
     g_lastConnectedPortName = cfg.value("last_port", "");
     g_lastProfilePath = Utf8ToWide(cfg.value("last_profile", ""));
     g_autoReconnect = cfg.value("auto_reconnect", true);
+    g_appSwitchingEnabled = cfg.value("app_switching_enabled", true);
     if (cfg.contains("app_bindings") && cfg["app_bindings"].is_object()) {
         for (auto& [k, v] : cfg["app_bindings"].items())
             g_appProfileBindings[Utf8ToWide(k)] = Utf8ToWide(v.get<std::string>());
@@ -516,6 +519,7 @@ void TryAutoReconnect() {
 // ══════════════════════════════════════════
 
 void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
+    if (!g_appSwitchingEnabled) return;
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
@@ -549,6 +553,16 @@ void HandleWebMessage(const std::string& messageStr) {
         ScanMidiPorts();
         SendMappingsToUI();
         SendStatus("Ready");
+        
+        // Send current config to UI
+        json cfgMsg = {
+            {"type", "config"},
+            {"config", {
+                {"auto_reconnect", g_autoReconnect},
+                {"app_switching", g_appSwitchingEnabled}
+            }}
+        };
+        PostToWebView(cfgMsg);
         // Auto-connect to last port
         if (!g_lastConnectedPortName.empty()) {
             for (int i = 0; i < (int)g_ports.size(); i++) {
@@ -659,10 +673,14 @@ void HandleWebMessage(const std::string& messageStr) {
             SendLog("Profile loaded: " + WideToUtf8(file));
         }
     }
+    else if (action == "update_config") {
+        g_autoReconnect = msg.value("auto_reconnect", g_autoReconnect);
+        g_appSwitchingEnabled = msg.value("app_switching", g_appSwitchingEnabled);
+        SaveConfig();
+        SendLog("Settings updated.");
+    }
     else if (action == "open_settings") {
-        // For now, show the about box or a placeholder since the old dialog-based settings 
-        // need to be ported to web.
-        MessageBox(g_hwndMain, L"Web-based settings are under construction. Please use the Save/Load profile buttons for now.", L"Settings", MB_OK | MB_ICONINFORMATION);
+        // Overlay is handled in JS, but we could trigger it from backend if needed
     }
     else if (action == "clear_log") {
         // Handled in JS, but could do backend cleanup if needed
