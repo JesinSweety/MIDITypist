@@ -59,6 +59,11 @@
       background: var(--bg-primary);
     }
 
+    select option {
+      background: #1e1e20;
+      color: white;
+    }
+
     /* ── Title Bar ── */
     .titlebar {
       display: flex;
@@ -852,7 +857,7 @@
 
   <!-- Context Band (Signals) -->
   <div id="contextBand" class="context-band" style="display:none;">
-    <span class="icon">🎯</span>
+    <span class="icon" style="font-size:10px; text-transform:uppercase; letter-spacing:1px;">Active</span>
     <span id="contextApp" class="app-name">None</span>
     <div class="divider"></div>
     <span id="contextTitle" class="window-title">No foreground window</span>
@@ -1097,6 +1102,16 @@
           <label style="display:block; margin-bottom:6px; font-size:12px; color:var(--text-secondary);">Key VK</label>
           <input type="number" id="editKeyVk"
             style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px;">
+        </div>
+        <div id="editFieldGesture" class="control-item">
+          <label style="display:block; margin-bottom:6px; font-size:12px; color:var(--text-secondary);">Trigger
+            Gesture</label>
+          <select id="editGestureId"
+            style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px;">
+            <option value="0">Single Tap (Standard)</option>
+            <option value="1">Double Tap</option>
+            <option value="2">Long Hold</option>
+          </select>
         </div>
         <div id="editFieldMacro" class="control-item" style="display:none;">
           <label style="display:block; margin-bottom:6px; font-size:12px; color:var(--text-secondary);">Macro
@@ -1389,7 +1404,7 @@
       document.getElementById('mapCount').textContent = mappings.length;
 
       if (mappings.length === 0) {
-        body.innerHTML = '<div class="empty-state"><div class="icon">🔗</div><span>Click <strong>Learn</strong> to create mappings</span></div>';
+        body.innerHTML = '<div class="empty-state"><span>Click <strong>Learn</strong> to create mappings</span></div>';
         return;
       }
 
@@ -1416,8 +1431,13 @@
         if (m.vel_zone === 1) zoneBadge = '<span class="zone-badge soft">soft</span>';
         else if (m.vel_zone === 2) zoneBadge = '<span class="zone-badge hard">hard</span>';
 
+        let gestureIcon = '';
+        if (m.gesture_id === 1) gestureIcon = '<span style="margin-right:8px; font-size:9px; font-weight:800; color:var(--accent); border:1px solid var(--accent); padding:1px 3px; border-radius:3px;">DBL</span>';
+        else if (m.gesture_id === 2) gestureIcon = '<span style="margin-right:8px; font-size:9px; font-weight:800; color:var(--text-secondary); border:1px solid var(--border-card); padding:1px 3px; border-radius:3px;">HLD</span>';
+
         item.innerHTML = `
           <div style="display:flex;align-items:center; flex:1; cursor:pointer;" onclick="openEditor(${i})">
+            ${gestureIcon}
             <span class="source">${escapeHtml(sourceText)}</span>
             <span class="arrow">→</span>
             <span class="target">${escapeHtml(targetText)}</span>
@@ -1490,7 +1510,7 @@
 
     function clearLog() {
       const body = document.getElementById('logBody');
-      body.innerHTML = '<div class="empty-state"><div class="icon">🎹</div><span>Log cleared</span></div>';
+      body.innerHTML = '<div class="empty-state"><span>Log cleared</span></div>';
       logEntries = 0;
       document.getElementById('logCount').textContent = '0';
       sendToBackend('clear_log');
@@ -1535,6 +1555,7 @@
       document.getElementById('editAiPrompt').value = m.ai_prompt || "";
       document.getElementById('editTitlePattern').value = m.title_pattern || "";
       document.getElementById('editAppPattern').value = m.app_pattern || "";
+      document.getElementById('editGestureId').value = m.gesture_id || 0;
       toggleEditFields();
     }
 
@@ -1543,6 +1564,7 @@
       document.getElementById('editFieldKey').style.display = (type == 4 || type == 5) ? 'none' : 'block';
       document.getElementById('editFieldMacro').style.display = (type == 4) ? 'block' : 'none';
       document.getElementById('editFieldAi').style.display = (type == 5) ? 'block' : 'none';
+      document.getElementById('editFieldGesture').style.display = (type == 0 || type == 4 || type == 5) ? 'block' : 'none';
     }
 
     function closeEditor() {
@@ -1564,7 +1586,8 @@
         macro_text: macro,
         ai_prompt: ai,
         title_pattern: title,
-        app_pattern: document.getElementById('editAppPattern').value
+        app_pattern: document.getElementById('editAppPattern').value,
+        gesture_id: parseInt(document.getElementById('editGestureId').value)
       });
       closeEditor();
     }

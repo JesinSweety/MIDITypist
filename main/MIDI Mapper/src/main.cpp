@@ -59,6 +59,9 @@ using json = nlohmann::json;
 #define CHORD_TIMER_ID 504
 #define CHORD_THRESHOLD_MS 60 // Window to group notes into a chord
 #define WM_CHORD_SIGNAL (WM_USER + 201)
+#define GESTURE_TIMER_ID 505
+#define GESTURE_WINDOW_MS 300
+#define LONG_HOLD_MS 800
 
 // ── Global State ──
 HINSTANCE g_hInst;
@@ -87,6 +90,7 @@ struct Mapping {
     std::string ai_prompt;  // for AI
     std::string title_pattern; // for Context Filter
     std::string app_pattern;   // for Process Filter (e.g. chrome.exe)
+    int gesture_id;     // 0=Single/Any, 1=Double Tap, 2=Long Hold
 };
 
 std::vector<Mapping> g_mappings;
@@ -99,6 +103,16 @@ std::map<std::wstring, std::wstring> g_appProfileBindings;
 std::wstring g_currentApp;
 std::wstring g_currentWindowTitle;
 HWINEVENTHOOK g_hWinEventHook = nullptr;
+
+// ── Gesture State ──
+struct KeyState {
+    DWORD lastPressTime = 0;
+    int tapCount = 0;
+    bool processingGesture = false;
+    bool holdTriggered = false;
+};
+std::map<int, KeyState> g_keyStates;
+std::mutex g_gestureMutex;
 
 // ── Tray Icon ──
 NOTIFYICONDATA g_nid = {};
@@ -129,6 +143,10 @@ std::vector<std::wstring> g_profileSlots;
 
 // ── CC Hold State ──
 std::map<int, bool> g_ccHoldActive;
+
+// ── Forward Declarations ──
+void SendMappingsToUI();
+void ResolveGesture(int midi_num, int gesture_id);
 
 // ══════════════════════════════════════════
 //  Utility Functions
@@ -223,7 +241,8 @@ void SendMappingsToUI() {
             {"macro_text", m.macro_text},
             {"ai_prompt", m.ai_prompt},
             {"title_pattern", m.title_pattern},
-            {"app_pattern", m.app_pattern}
+            {"app_pattern", m.app_pattern},
+            {"gesture_id", m.gesture_id}
         };
         if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
         arr.push_back(item);
@@ -315,6 +334,7 @@ void SaveMappings(const std::wstring& filename) {
             if (m.midi_type == 5) item["ai_prompt"] = m.ai_prompt;
             if (!m.title_pattern.empty()) item["title_pattern"] = m.title_pattern;
             if (!m.app_pattern.empty()) item["app_pattern"] = m.app_pattern;
+            item["gesture_id"] = m.gesture_id;
             j.push_back(item);
         }
     }
@@ -341,6 +361,7 @@ void LoadMappings(const std::wstring& filename) {
             m.ai_prompt = it.value("ai_prompt", "");
             m.title_pattern = it.value("title_pattern", "");
             m.app_pattern = it.value("app_pattern", "");
+            m.gesture_id = it.value("gesture_id", 0);
             m.key_vk = it.value("key_vk", 0);
             m.modifiers = it.value("modifiers", 0);
             m.vel_min = it.value("vel_min", 1);
@@ -513,9 +534,36 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     if (isNoteOn && number >= 0 && number < 128) {
         g_pianoVelocity[number] = velocity;
         PostToWebView({ {"type", "midi_note"}, {"note", number}, {"velocity", velocity} });
+        
+        // Gesture Tracking (v4.3)
+        std::lock_guard<std::mutex> lock(g_gestureMutex);
+        auto& state = g_keyStates[number];
+        DWORD now = GetTickCount();
+        if (now - state.lastPressTime < GESTURE_WINDOW_MS) {
+            state.tapCount++;
+        } else {
+            state.tapCount = 1;
+            SetTimer(g_hwndMain, GESTURE_TIMER_ID + number, GESTURE_WINDOW_MS, NULL);
+        }
+        state.lastPressTime = now;
+        state.processingGesture = true;
+        state.holdTriggered = false;
     }
     else if (isNoteOff && number >= 0 && number < 128) {
         g_pianoVelocity[number] = 0;
+        
+        // Handle Long Hold if window not closed
+        std::lock_guard<std::mutex> lock(g_gestureMutex);
+        auto& state = g_keyStates[number];
+        DWORD duration = GetTickCount() - state.lastPressTime;
+        if (duration >= LONG_HOLD_MS && !state.holdTriggered) {
+            state.holdTriggered = true;
+            KillTimer(g_hwndMain, GESTURE_TIMER_ID + number);
+            state.tapCount = 0;
+            state.processingGesture = false;
+            ResolveGesture(number, 2); // Long Hold
+            return;
+        }
     }
     if (isCC && number >= 0 && number < 128) {
         g_pianoCC[number] = velocity;
@@ -611,6 +659,31 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
                 PostToWebView({ {"type", "hud"}, {"active", false} });
             }
         }
+    }
+}
+
+void ResolveGesture(int midi_num, int gesture_id) {
+    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    for (const auto& m : g_mappings) {
+        if (m.midi_num != midi_num) continue;
+        if (m.gesture_id != gesture_id && m.gesture_id != 0) continue; // Match specific or "any"
+        // If we specified a specific gesture, only fire if it matches
+        if (gesture_id != 0 && m.gesture_id != gesture_id) continue;
+
+        // Context check
+        if (!m.title_pattern.empty()) {
+            std::string currentTitle = WideToUtf8(g_currentWindowTitle);
+            if (currentTitle.find(m.title_pattern) == std::string::npos) continue;
+        }
+        if (!m.app_pattern.empty()) {
+            std::string currentApp = WideToUtf8(g_currentApp);
+            if (currentApp.find(m.app_pattern) == std::string::npos) continue;
+        }
+
+        // Execute (Simplified trigger for gesture demo)
+        if (m.midi_type == 0) SimulateKeyCombo(m.key_vk, m.modifiers);
+        else if (m.midi_type == 4) SimulateText(m.macro_text);
+        else if (m.midi_type == 5) PostToWebView({ {"type", "run_ai"}, {"prompt", m.ai_prompt} });
     }
 }
 
@@ -858,6 +931,7 @@ void HandleWebMessage(const std::string& messageStr) {
                 m.ai_prompt = msg.value("ai_prompt", m.ai_prompt);
                 m.title_pattern = msg.value("title_pattern", m.title_pattern);
                 m.app_pattern = msg.value("app_pattern", m.app_pattern);
+                m.gesture_id = msg.value("gesture_id", m.gesture_id);
             }
         }
         SendMappingsToUI();
@@ -916,7 +990,7 @@ void HandleWebMessage(const std::string& messageStr) {
     else if (action == "add_mapping") {
         {
             std::lock_guard<std::mutex> lock(g_mappingsMutex);
-            Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "", "" };
+            Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "", "", 0 };
             g_mappings.push_back(m);
         }
         SendMappingsToUI();
@@ -965,6 +1039,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
     case WM_TIMER:
+        if (wParam >= GESTURE_TIMER_ID && wParam < GESTURE_TIMER_ID + 128) {
+            int note = (int)(wParam - GESTURE_TIMER_ID);
+            KillTimer(hwnd, wParam);
+            
+            int finalTapCount = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_gestureMutex);
+                auto& state = g_keyStates[note];
+                finalTapCount = state.tapCount;
+                state.tapCount = 0;
+                state.processingGesture = false;
+            }
+            
+            if (finalTapCount == 1) ResolveGesture(note, 0); // Single
+            else if (finalTapCount == 2) ResolveGesture(note, 1); // Double
+            return 0;
+        }
         if (wParam == RECONNECT_TIMER_ID) {
             TryAutoReconnect();
         }
