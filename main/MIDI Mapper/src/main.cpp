@@ -114,6 +114,10 @@ int g_pianoCC[128] = { 0 };
 // ── Auto Reconnect & App Switching ──
 bool g_autoReconnect = true;
 bool g_appSwitchingEnabled = true;
+bool g_velocityZonesEnabled = true;
+bool g_minimizeToTrayEnabled = true;
+std::string g_aiApiKey;
+std::string g_aiGlobalPrompt = "You are a desktop automation assistant. Perform the following task briefly: {prompt}";
 
 // ── Chord Collector ──
 std::vector<int> g_chordBuffer;
@@ -364,6 +368,10 @@ void SaveConfig() {
     for (auto& s : g_profileSlots)
         slots.push_back(WideToUtf8(s));
     cfg["profile_slots"] = slots;
+    cfg["ai_api_key"] = g_aiApiKey;
+    cfg["ai_global_prompt"] = g_aiGlobalPrompt;
+    cfg["velocity_zones_enabled"] = g_velocityZonesEnabled;
+    cfg["minimize_to_tray_enabled"] = g_minimizeToTrayEnabled;
     std::ofstream f(g_configPath);
     if (f) f << cfg.dump(4);
 }
@@ -381,6 +389,11 @@ void LoadConfig() {
         for (auto& [k, v] : cfg["app_bindings"].items())
             g_appProfileBindings[Utf8ToWide(k)] = Utf8ToWide(v.get<std::string>());
     }
+    g_aiApiKey = cfg.value("ai_api_key", "");
+    g_aiGlobalPrompt = cfg.value("ai_global_prompt", "You are a desktop automation assistant. Perform the following task briefly: {prompt}");
+    g_velocityZonesEnabled = cfg.value("velocity_zones_enabled", true);
+    g_minimizeToTrayEnabled = cfg.value("minimize_to_tray_enabled", true);
+
     if (cfg.contains("profile_slots") && cfg["profile_slots"].is_array()) {
         g_profileSlots.clear();
         for (auto& s : cfg["profile_slots"])
@@ -541,8 +554,10 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
 
         if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
             if (velocity < m.vel_min) continue;
-            if (m.vel_zone == 1 && velocity > 63) continue;
-            if (m.vel_zone == 2 && velocity < 64) continue;
+            if (g_velocityZonesEnabled) {
+                if (m.vel_zone == 1 && velocity > 63) continue;
+                if (m.vel_zone == 2 && velocity < 64) continue;
+            }
             SimulateKeyCombo(m.key_vk, m.modifiers);
         }
 
@@ -659,6 +674,24 @@ void TryAutoReconnect() {
 //  Per-App Switching
 // ══════════════════════════════════════════
 
+void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime);
+
+void StartAppMonitoring() {
+    if (!g_hWinEventHook) {
+        g_hWinEventHook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+            NULL, WinEventProc, 0, 0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    }
+}
+
+void StopAppMonitoring() {
+    if (g_hWinEventHook) {
+        UnhookWinEvent(g_hWinEventHook);
+        g_hWinEventHook = nullptr;
+    }
+}
+
 void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {
     if (event == EVENT_SYSTEM_FOREGROUND && hwnd) {
         wchar_t path[MAX_PATH];
@@ -717,7 +750,11 @@ void HandleWebMessage(const std::string& messageStr) {
             {"type", "config"},
             {"config", {
                 {"auto_reconnect", g_autoReconnect},
-                {"app_switching", g_appSwitchingEnabled}
+                {"app_switching", g_appSwitchingEnabled},
+                {"ai_api_key", g_aiApiKey},
+                {"ai_global_prompt", g_aiGlobalPrompt},
+                {"velocity_zones", g_velocityZonesEnabled},
+                {"minimize_to_tray", g_minimizeToTrayEnabled}
             }}
         };
         PostToWebView(cfgMsg);
@@ -850,17 +887,30 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "update_config") {
         g_autoReconnect = msg.value("auto_reconnect", true);
-        bool appSwitching = msg.value("app_switching", false);
-        if (appSwitching != (g_hWinEventHook != nullptr)) {
-            if (appSwitching) StartAppMonitoring();
+        g_appSwitchingEnabled = msg.value("app_switching", false);
+        g_velocityZonesEnabled = msg.value("velocity_zones", true);
+        g_minimizeToTrayEnabled = msg.value("minimize_to_tray", true);
+        if (g_appSwitchingEnabled != (g_hWinEventHook != nullptr)) {
+            if (g_appSwitchingEnabled) StartAppMonitoring();
             else StopAppMonitoring();
         }
+        g_aiApiKey = msg.value("ai_api_key", g_aiApiKey);
+        g_aiGlobalPrompt = msg.value("ai_global_prompt", g_aiGlobalPrompt);
         SaveConfig();
         SendLog("Settings updated.");
     }
     else if (action == "simulate_text") {
         std::string text = msg.value("text", "");
         SimulateText(text);
+    }
+    else if (action == "add_mapping") {
+        {
+            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "" };
+            g_mappings.push_back(m);
+        }
+        SendMappingsToUI();
+        SendLog("Manual mapping added.");
     }
     else if (action == "open_settings") {
         // Overlay is handled in JS, but we could trigger it from backend if needed
@@ -892,10 +942,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
         g_hwndMain = hwnd;
-        g_hWinEventHook = SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
-            NULL, WinEventProc, 0, 0,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        if (g_appSwitchingEnabled) StartAppMonitoring();
         SetTimer(hwnd, RECONNECT_TIMER_ID, RECONNECT_INTERVAL, NULL);
         SetTimer(hwnd, PIANO_DECAY_TIMER, PIANO_DECAY_MS, NULL);
         AddTrayIcon(hwnd);
@@ -971,7 +1018,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         else if (LOWORD(wParam) == ID_TRAY_EXIT) DestroyWindow(hwnd);
         break;
     case WM_CLOSE:
-        MinimizeToTray(hwnd);
+        if (g_minimizeToTrayEnabled) {
+            MinimizeToTray(hwnd);
+        } else {
+            DestroyWindow(hwnd);
+        }
         return 0;
     case WM_DESTROY:
         SaveConfig();

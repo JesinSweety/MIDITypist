@@ -886,7 +886,10 @@
     <div class="card">
       <div class="card-header">
         <h2>Key Mappings</h2>
-        <span id="mapCount" class="badge">0</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="mini-btn" onclick="addMapping()" title="Add Mapping Manually">+</button>
+          <span id="mapCount" class="badge">0</span>
+        </div>
       </div>
       <div id="mapBody" class="card-body">
         <div class="empty-state">
@@ -938,14 +941,14 @@
             <span class="setting-desc">Close button will hide the app instead of exiting.</span>
           </div>
           <label class="switch">
-            <input type="checkbox" checked disabled>
+            <input type="checkbox" id="settingMinimizeToTray" checked onchange="updateSettings()">
             <span class="slider"></span>
           </label>
         </div>
-      </div>
+      </div> <!-- End General Section -->
 
       <div class="settings-section">
-        <h3>Profile Routing</h3>
+        <h3>Smart Context</h3>
         <div class="setting-item">
           <div class="setting-info">
             <span class="setting-label">App Auto-Switching</span>
@@ -966,7 +969,7 @@
             <span class="setting-desc">Trigger different actions based on strike force.</span>
           </div>
           <label class="switch">
-            <input type="checkbox" id="checkVelocity" checked>
+            <input type="checkbox" id="settingVelocityZones" onchange="updateSettings()" checked>
             <span class="slider"></span>
           </label>
         </div>
@@ -976,23 +979,23 @@
         <div class="setting-item">
           <div class="setting-info" style="width:100%;">
             <span class="setting-label">OpenAI API Key</span>
-            <input type="password" id="inputApiKey" placeholder="sk-..."
+            <input type="password" id="inputApiKey" placeholder="sk-..." onchange="updateSettings()"
               style="margin-top:8px; width:100%; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:6px; padding:6px; font-family:inherit;">
           </div>
         </div>
         <div class="setting-item">
           <div class="setting-info" style="width:100%;">
             <span class="setting-label">Global Prompt Mask</span>
-            <textarea id="inputAiGlobal"
+            <textarea id="inputAiGlobal" onchange="updateSettings()"
               style="margin-top:8px; width:100%; height:60px; background:var(--bg-input); border:1px solid var(--border-card); color:white; border-radius:8px; padding:8px; font-family:inherit; font-size:11px;">You are a desktop automation assistant. Perform the following task briefly: {prompt}</textarea>
           </div>
         </div>
       </div>
-    </div>
+    </div> <!-- End settings-grid -->
     <div style="margin-top: 40px; text-align: center; color: var(--text-tertiary); font-size: 12px;">
       MIDITypist v4.1 &bull; (C) 2026
     </div>
-  </div>
+  </div> <!-- End settingsOverlay -->
 
   <!-- HUD Overlay -->
   <div id="hudOverlay">
@@ -1083,6 +1086,7 @@
     // ── State ──
     let logEntries = 0;
     let isLearning = false;
+    let mappings = [];
 
     // ── Send message to C++ backend ──
     function sendToBackend(action, data = {}) {
@@ -1141,9 +1145,17 @@
     function updateSettings() {
       const autoReconnect = document.getElementById('settingAutoReconnect').checked;
       const appSwitching = document.getElementById('settingAppSwitching').checked;
+      const velocityZones = document.getElementById('settingVelocityZones').checked;
+      const minimizeToTray = document.getElementById('settingMinimizeToTray').checked;
+      const apiKey = document.getElementById('inputApiKey').value;
+      const aiGlobal = document.getElementById('inputAiGlobal').value;
       sendToBackend('update_config', {
         auto_reconnect: autoReconnect,
-        app_switching: appSwitching
+        app_switching: appSwitching,
+        velocity_zones: velocityZones,
+        minimize_to_tray: minimizeToTray,
+        ai_api_key: apiKey,
+        ai_global_prompt: aiGlobal
       });
     }
 
@@ -1156,6 +1168,10 @@
           if (msg.config) {
             document.getElementById('settingAutoReconnect').checked = msg.config.auto_reconnect;
             document.getElementById('settingAppSwitching').checked = msg.config.app_switching;
+            if (msg.config.velocity_zones !== undefined) document.getElementById('settingVelocityZones').checked = msg.config.velocity_zones;
+            if (msg.config.minimize_to_tray !== undefined) document.getElementById('settingMinimizeToTray').checked = msg.config.minimize_to_tray;
+            if (msg.config.ai_api_key !== undefined) document.getElementById('inputApiKey').value = msg.config.ai_api_key;
+            if (msg.config.ai_global_prompt !== undefined) document.getElementById('inputAiGlobal').value = msg.config.ai_global_prompt;
           }
           break;
         case 'ports':
@@ -1292,7 +1308,8 @@
       document.getElementById('logCount').textContent = logEntries;
     }
 
-    function updateMappings(mappings) {
+    function updateMappings(newMappings) {
+      mappings = newMappings;
       const body = document.getElementById('mapBody');
       body.innerHTML = '';
       document.getElementById('mapCount').textContent = mappings.length;
@@ -1322,14 +1339,17 @@
         else if (m.vel_zone === 2) zoneBadge = '<span class="zone-badge hard">hard</span>';
 
         item.innerHTML = `
-      <div style="display:flex;align-items:center; cursor:pointer;" onclick="openEditor(${i})">
-        <span class="source">${escapeHtml(sourceText)}</span>
-        <span class="arrow">→</span>
-        <span class="target">${escapeHtml(targetText)}</span>
-        ${zoneBadge}
-      </div>
-      <button class="delete-btn" onclick="deleteMapping(${i})">✕</button>
-    `;
+          <div style="display:flex;align-items:center; flex:1; cursor:pointer;" onclick="openEditor(${i})">
+            <span class="source">${escapeHtml(sourceText)}</span>
+            <span class="arrow">→</span>
+            <span class="target">${escapeHtml(targetText)}</span>
+            ${zoneBadge}
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button class="mini-btn" style="padding:2px 6px; font-size:10px; opacity:0.8;" onclick="openEditor(${i})">EDIT</button>
+            <button class="delete-btn" onclick="deleteMapping(${i})">✕</button>
+          </div>
+        `;
         body.appendChild(item);
       });
     }
@@ -1400,6 +1420,10 @@
 
     function clearMappings() {
       sendToBackend('clear_mappings');
+    }
+
+    function addMapping() {
+      sendToBackend('add_mapping');
     }
 
     function saveProfile() {
