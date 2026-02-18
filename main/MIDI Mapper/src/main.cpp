@@ -14,12 +14,20 @@
 #include <algorithm>
 #include <functional>
 #include "RtMidi.h"
-#include "json.hpp"
 
 // WebView2
 #include <wrl.h>
 #include <wil/com.h>
+// Suppress warnings from external libraries
+#pragma warning(push)
+#pragma warning(disable: 26819) // Unannotated fallthrough in json.hpp
+#pragma warning(disable: 26495) // Uninitialized member in json.hpp
+#pragma warning(disable: 28182) // Dereferencing null pointer in wil/resource.h
+#include "json.hpp"
+#include <wil/result.h>
+#include <wil/resource.h>
 #include "WebView2.h"
+#pragma warning(pop)
 
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "Psapi.lib")
@@ -66,8 +74,8 @@ std::string g_lastConnectedPortName;
 
 // ── Mapping struct ──
 struct Mapping {
-    int midi_type;      // 0=Note, 1=CC, 2=Chord, 3=LayerKey
-    int midi_num;       // for Note/CC/LayerKey
+    int midi_type;      // 0=Note, 1=CC, 2=Chord, 3=LayerKey, 4=Macro, 5=AI
+    int midi_num;       // for Note/CC/LayerKey/Macro/AI
     std::vector<int> midi_chord; // for Chord
     int key_vk;
     int modifiers;      // bitmask: 1=Ctrl, 2=Shift, 4=Alt
@@ -75,16 +83,20 @@ struct Mapping {
     int vel_zone;       // 0=any, 1=soft(1-63), 2=hard(64-127)
     int cc_action;      // 0=keypress, 1=mouse_x, 2=mouse_y, 3=scroll, 4=hold_key
     int profile_switch; // -1=normal, 0+=profile slot index
+    std::string macro_text; // for Macro
+    std::string ai_prompt;  // for AI
+    std::string title_pattern; // for Context Filter
 };
 
 std::vector<Mapping> g_mappings;
 std::mutex g_mappingsMutex;
 bool g_learning = false;
-Mapping g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
+Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "" };
 
 // ── Per-App Profile ──
 std::map<std::wstring, std::wstring> g_appProfileBindings;
-std::wstring g_lastProfileLoadedForApp;
+std::wstring g_currentApp;
+std::wstring g_currentWindowTitle;
 HWINEVENTHOOK g_hWinEventHook = nullptr;
 
 // ── Tray Icon ──
@@ -202,7 +214,10 @@ void SendMappingsToUI() {
             {"key_vk", m.key_vk}, {"modifiers", m.modifiers},
             {"vel_min", m.vel_min}, {"vel_zone", m.vel_zone},
             {"cc_action", m.cc_action}, {"profile_switch", m.profile_switch},
-            {"target_display", WideToUtf8(targetDisplay)}
+            {"target_display", WideToUtf8(targetDisplay)},
+            {"macro_text", m.macro_text},
+            {"ai_prompt", m.ai_prompt},
+            {"title_pattern", m.title_pattern}
         };
         if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
         arr.push_back(item);
@@ -256,6 +271,24 @@ void SimulateScroll(int amount) {
     SendInput(1, &input, sizeof(INPUT));
 }
 
+void SimulateText(const std::string& text) {
+    if (text.empty()) return;
+    std::wstring wtext = Utf8ToWide(text);
+    std::vector<INPUT> inputs;
+    for (wchar_t ch : wtext) {
+        INPUT inDown = {};
+        inDown.type = INPUT_KEYBOARD;
+        inDown.ki.wScan = ch;
+        inDown.ki.dwFlags = KEYEVENTF_UNICODE;
+        inputs.push_back(inDown);
+
+        INPUT inUp = inDown;
+        inUp.ki.dwFlags |= KEYEVENTF_KEYUP;
+        inputs.push_back(inUp);
+    }
+    SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT));
+}
+
 // ══════════════════════════════════════════
 //  Mapping Persistence
 // ══════════════════════════════════════════
@@ -272,6 +305,9 @@ void SaveMappings(const std::wstring& filename) {
                 {"cc_action", m.cc_action}, {"profile_switch", m.profile_switch}
             };
             if (m.midi_type == 2) item["midi_chord"] = m.midi_chord;
+            if (m.midi_type == 4) item["macro_text"] = m.macro_text;
+            if (m.midi_type == 5) item["ai_prompt"] = m.ai_prompt;
+            if (!m.title_pattern.empty()) item["title_pattern"] = m.title_pattern;
             j.push_back(item);
         }
     }
@@ -294,6 +330,9 @@ void LoadMappings(const std::wstring& filename) {
             if (it.contains("midi_chord") && it["midi_chord"].is_array()) {
                 m.midi_chord = it["midi_chord"].get<std::vector<int>>();
             }
+            m.macro_text = it.value("macro_text", "");
+            m.ai_prompt = it.value("ai_prompt", "");
+            m.title_pattern = it.value("title_pattern", "");
             m.key_vk = it.value("key_vk", 0);
             m.modifiers = it.value("modifiers", 0);
             m.vel_min = it.value("vel_min", 1);
@@ -421,6 +460,13 @@ void ProcessChord(const std::vector<int>& chord) {
     // 1. Try to find a specific chord mapping
     if (sortedChord.size() > 1) {
         for (const auto& m : g_mappings) {
+            // Smart Context Filter (v4.1)
+            if (!m.title_pattern.empty()) {
+                std::string currentTitle = WideToUtf8(g_currentWindowTitle);
+                if (currentTitle.find(m.title_pattern) == std::string::npos) {
+                    continue; // Skip if title doesn't match
+                }
+            }
             if (m.midi_type == 2 && m.midi_chord == sortedChord) {
                 SimulateKeyCombo(m.key_vk, m.modifiers);
                 SendLog("Chord triggered: " + std::to_string(sortedChord.size()) + " notes");
@@ -476,6 +522,14 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     // Execute mappings
     std::lock_guard<std::mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
+        // Smart Context Filter (v4.1)
+        if (!m.title_pattern.empty()) {
+            std::string currentTitle = WideToUtf8(g_currentWindowTitle);
+            if (currentTitle.find(m.title_pattern) == std::string::npos) {
+                continue; // Skip if title doesn't match
+            }
+        }
+
         if (m.profile_switch >= 0) {
             if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
                 if (m.profile_switch < (int)g_profileSlots.size()) {
@@ -512,6 +566,19 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             }
         }
         
+        // Macro Support (v4.1)
+        if (m.midi_type == 4 && isNoteOn && number == m.midi_num) {
+            SimulateText(m.macro_text);
+            SendLog("Macro triggered: " + std::to_string(m.macro_text.length()) + " chars");
+        }
+
+        // AI Support (v4.1)
+        if (m.midi_type == 5 && isNoteOn && number == m.midi_num) {
+            PostToWebView({ {"type", "run_ai"}, {"prompt", m.ai_prompt} });
+            SendLog("AI Prompt sent: " + m.ai_prompt);
+            SendStatus("AI is thinking...");
+        }
+
         // HUD / Layer Key support
         if (m.midi_type == 3 && number == m.midi_num) {
             if (isNoteOn) {
@@ -592,24 +659,41 @@ void TryAutoReconnect() {
 //  Per-App Switching
 // ══════════════════════════════════════════
 
-void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD) {
-    if (!g_appSwitchingEnabled) return;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-    if (hProc) {
-        wchar_t exeName[MAX_PATH] = { 0 };
-        if (GetModuleFileNameExW(hProc, NULL, exeName, MAX_PATH)) {
-            std::wstring exe(exeName);
-            exe = exe.substr(exe.find_last_of(L"\\") + 1);
-            auto it = g_appProfileBindings.find(exe);
-            if (it != g_appProfileBindings.end() && it->second != g_lastProfileLoadedForApp) {
-                g_lastProfileLoadedForApp = it->second;
-                LoadMappings(it->second);
-                SendLog("Auto-switched profile for: " + WideToUtf8(exe));
+void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {
+    if (event == EVENT_SYSTEM_FOREGROUND && hwnd) {
+        wchar_t path[MAX_PATH];
+        DWORD pid;
+        GetWindowThreadProcessId(hwnd, &pid);
+        HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (hProcess) {
+            if (GetProcessImageFileNameW(hProcess, path, MAX_PATH)) {
+                wchar_t* filename = wcsrchr(path, L'\\');
+                if (filename) {
+                    g_currentApp = filename + 1;
+                    
+                    // Capture title too
+                    wchar_t title[512];
+                    if (GetWindowTextW(hwnd, title, 512)) {
+                        g_currentWindowTitle = title;
+                    } else {
+                        g_currentWindowTitle = L"";
+                    }
+
+                    PostToWebView({ 
+                        {"type", "app_changed"}, 
+                        {"app", WideToUtf8(g_currentApp)},
+                        {"title", WideToUtf8(g_currentWindowTitle)}
+                    });
+                    
+                    // Trigger profile switch if bound
+                    if (g_appProfileBindings.count(g_currentApp)) {
+                        LoadMappings(g_appProfileBindings[g_currentApp]);
+                        SendLog("Auto-switched profile for: " + WideToUtf8(g_currentApp));
+                    }
+                }
             }
+            CloseHandle(hProcess);
         }
-        CloseHandle(hProc);
     }
 }
 
@@ -660,13 +744,13 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "start_learn") {
         g_learning = true;
-        g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
+        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "" };
         SendLog("Learning: Press a MIDI note or CC, then a keyboard key.");
         SendStatus("Waiting for MIDI input...");
     }
     else if (action == "cancel_learn") {
         g_learning = false;
-        g_learn_pending = { -1, -1, -1, 0, 1, 0, 0, -1 };
+        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "" };
         SendStatus("Learning cancelled.");
     }
     else if (action == "learn_key") {
@@ -699,10 +783,11 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "delete_mapping") {
         int index = msg.value("index", -1);
-        {
+        if (index >= 0) {
             std::lock_guard<std::mutex> lock(g_mappingsMutex);
-            if (index >= 0 && index < (int)g_mappings.size())
+            if (index < (int)g_mappings.size()) {
                 g_mappings.erase(g_mappings.begin() + index);
+            }
         }
         SendMappingsToUI();
         SendLog("Mapping removed.");
@@ -714,6 +799,22 @@ void HandleWebMessage(const std::string& messageStr) {
         }
         SendMappingsToUI();
         SendLog("All mappings cleared.");
+    }
+    else if (action == "update_mapping") {
+        int index = msg.value("index", -1);
+        if (index >= 0) {
+            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            if (index < (int)g_mappings.size()) {
+                Mapping& m = g_mappings[index];
+                m.midi_type = msg.value("midi_type", m.midi_type);
+                m.key_vk = msg.value("key_vk", m.key_vk);
+                m.macro_text = msg.value("macro_text", m.macro_text);
+                m.ai_prompt = msg.value("ai_prompt", m.ai_prompt);
+                m.title_pattern = msg.value("title_pattern", m.title_pattern);
+            }
+        }
+        SendMappingsToUI();
+        SendLog("Mapping updated.");
     }
     else if (action == "save_profile") {
         OPENFILENAME ofn = {};
@@ -748,10 +849,18 @@ void HandleWebMessage(const std::string& messageStr) {
         }
     }
     else if (action == "update_config") {
-        g_autoReconnect = msg.value("auto_reconnect", g_autoReconnect);
-        g_appSwitchingEnabled = msg.value("app_switching", g_appSwitchingEnabled);
+        g_autoReconnect = msg.value("auto_reconnect", true);
+        bool appSwitching = msg.value("app_switching", false);
+        if (appSwitching != (g_hWinEventHook != nullptr)) {
+            if (appSwitching) StartAppMonitoring();
+            else StopAppMonitoring();
+        }
         SaveConfig();
         SendLog("Settings updated.");
+    }
+    else if (action == "simulate_text") {
+        std::string text = msg.value("text", "");
+        SimulateText(text);
     }
     else if (action == "open_settings") {
         // Overlay is handled in JS, but we could trigger it from backend if needed
@@ -981,11 +1090,12 @@ void InitWebView2(HWND hwnd) {
 //  Entry Point
 // ══════════════════════════════════════════
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
+int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nCmdShow) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     // Initialize COM for WebView2
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(hr)) return 1;
 
     g_hInst = hInstance;
     g_configPath = GetConfigDir() + L"midityper_config.json";
