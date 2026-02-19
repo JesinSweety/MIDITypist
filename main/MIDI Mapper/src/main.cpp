@@ -59,7 +59,8 @@ using json = nlohmann::json;
 #define PIANO_DECAY_MS 50
 #define CHORD_TIMER_ID 504
 #define CHORD_THRESHOLD_MS 60 // Window to group notes into a chord
-#define WM_CHORD_SIGNAL (WM_USER + 201)
+#define WM_CHORD_SIGNAL (WM_USER + 1)
+#define WM_LEARN_MIDI_SIGNAL (WM_USER + 2)
 #define GESTURE_TIMER_ID 505
 #define GESTURE_WINDOW_MS 300
 #define LONG_HOLD_MS 800
@@ -97,6 +98,8 @@ struct Mapping {
 std::vector<Mapping> g_mappings;
 std::recursive_mutex g_mappingsMutex;
 bool g_learning = false;
+std::mutex g_learnMutex;
+DWORD g_learnStartTime = 0;
 Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "", 0 };
 
 // ── Per-App Profile ──
@@ -477,6 +480,33 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
     bool isNoteOff = (status & 0xF0) == 0x80 || ((status & 0xF0) == 0x90 && velocity == 0);
     bool isCC = (status & 0xF0) == 0xB0;
 
+    // Learning mode check
+    {
+        std::lock_guard<std::mutex> lock(g_learnMutex);
+        if (g_learning && g_learn_pending.midi_type == -1) {
+            bool learnThis = false;
+            int type = 0;
+            if (isNoteOn) {
+                type = 0;
+                learnThis = true;
+            } else if (isCC && number < 120) { // Filter CC noise
+                type = 1;
+                learnThis = true;
+            }
+
+            if (learnThis) {
+                // Post to main thread to handle transition
+                PostMessage(g_hwndMain, WM_LEARN_MIDI_SIGNAL, (WPARAM)type, (LPARAM)number);
+                return; // Exit callback if learning
+            }
+        }
+    }
+
+    // CC immediately if not learning
+    if (isCC) {
+        ProcessMIDIEvent(status & 0xF0, number, velocity);
+    }
+    
     // Chord grouping logic for Note On
     if (isNoteOn) {
         std::lock_guard<std::mutex> lock(g_chordMutex);
@@ -485,8 +515,8 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
         PostMessage(g_hwndMain, WM_CHORD_SIGNAL, 0, 0);
     }
     
-    // Process Note Off and CC immediately
-    if (isNoteOff || isCC) {
+    // Process Note Off immediately (CC is handled above if not learning)
+    if (isNoteOff) {
         ProcessMIDIEvent(status & 0xF0, number, velocity);
     }
 }
@@ -496,6 +526,11 @@ void ProcessChord(const std::vector<int>& chord) {
 
     std::vector<int> sortedChord = chord;
     std::sort(sortedChord.begin(), sortedChord.end());
+    sortedChord.erase(std::unique(sortedChord.begin(), sortedChord.end()), sortedChord.end());
+
+    std::string chordStr = "";
+    for (int n : sortedChord) chordStr += std::to_string(n) + " ";
+    SendLog("Processing MIDI chord: [ " + chordStr + "]");
     
     std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     bool found = false;
@@ -503,7 +538,9 @@ void ProcessChord(const std::vector<int>& chord) {
     // 1. Try to find a specific chord mapping
     if (sortedChord.size() > 1) {
         for (const auto& m : g_mappings) {
-            // Context Stack Filtering (v4.2): Title + App
+            if (m.midi_type != 2) continue;
+
+            // Context Stack Filtering
             if (!m.title_pattern.empty()) {
                 std::string currentTitle = WideToUtf8(g_currentWindowTitle);
                 if (currentTitle.find(m.title_pattern) == std::string::npos) continue;
@@ -513,9 +550,14 @@ void ProcessChord(const std::vector<int>& chord) {
                 if (currentApp.find(m.app_pattern) == std::string::npos) continue;
             }
 
-            if (m.midi_type == 2 && m.midi_chord == sortedChord) {
+            // Compare sorted notes
+            std::vector<int> targetChord = m.midi_chord;
+            std::sort(targetChord.begin(), targetChord.end());
+            targetChord.erase(std::unique(targetChord.begin(), targetChord.end()), targetChord.end());
+
+            if (targetChord == sortedChord) {
                 SimulateKeyCombo(m.key_vk, m.modifiers);
-                SendLog("Chord triggered: " + std::to_string(sortedChord.size()) + " notes");
+                SendLog("Match found! Triggering VK " + std::to_string(m.key_vk));
                 found = true;
                 break;
             }
@@ -573,27 +615,6 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     if (isCC && number >= 0 && number < 128) {
         g_pianoCC[number] = velocity;
         PostToWebView({ {"type", "midi_cc"}, {"cc", number}, {"value", velocity} });
-    }
-
-    // Learning mode
-    if (g_learning && g_learn_pending.midi_type == -1) {
-        if (isNoteOn) {
-            g_learn_pending.midi_type = 0;
-            g_learn_pending.midi_num = number;
-        }
-        else if (isCC) {
-            g_learn_pending.midi_type = 1;
-            g_learn_pending.midi_num = number;
-        }
-
-        if (g_learn_pending.midi_type != -1) {
-            PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
-            SendStatus("Waiting for keyboard key...");
-            if (!g_hKeyboardHook) {
-                g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
-            }
-        }
-        return;
     }
 
     // Execute mappings
@@ -871,13 +892,31 @@ void HandleWebMessage(const std::string& messageStr) {
         }
     }
     else if (action == "start_learn") {
+        std::lock_guard<std::mutex> lock(g_learnMutex);
         g_learning = true;
+        g_learnStartTime = GetTickCount();
         g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "", 0 };
-        SendLog("Learning: Press a MIDI note or CC, then a keyboard key.");
+        
+        // Clean up any stale hook
+        if (g_hKeyboardHook) {
+            UnhookWindowsHookEx(g_hKeyboardHook);
+            g_hKeyboardHook = NULL;
+        }
+
+        // Kill any pending chord timers and clear the buffer
+        KillTimer(g_hwndMain, CHORD_TIMER_ID);
+        {
+            std::lock_guard<std::mutex> chordLock(g_chordMutex);
+            g_chordBuffer.clear();
+        }
+
+        SendLog("Learning started: Waiting for MIDI...");
         SendStatus("Waiting for MIDI input...");
     }
     else if (action == "cancel_learn") {
+        std::lock_guard<std::mutex> lock(g_learnMutex);
         g_learning = false;
+        KillTimer(g_hwndMain, CHORD_TIMER_ID);
         if (g_hKeyboardHook) {
             UnhookWindowsHookEx(g_hKeyboardHook);
             g_hKeyboardHook = NULL;
@@ -942,6 +981,14 @@ void HandleWebMessage(const std::string& messageStr) {
                 m.key_vk = msg.value("key_vk", m.key_vk);
                 m.macro_text = msg.value("macro_text", m.macro_text);
                 m.ai_prompt = msg.value("ai_prompt", m.ai_prompt);
+                
+                if (msg.contains("midi_chord") && msg["midi_chord"].is_array()) {
+                    std::vector<int> chord = msg["midi_chord"].get<std::vector<int>>();
+                    std::sort(chord.begin(), chord.end());
+                    chord.erase(std::unique(chord.begin(), chord.end()), chord.end());
+                    m.midi_chord = chord;
+                }
+
                 m.title_pattern = msg.value("title_pattern", m.title_pattern);
                 m.app_pattern = msg.value("app_pattern", m.app_pattern);
                 m.gesture_id = msg.value("gesture_id", m.gesture_id);
@@ -1099,9 +1146,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
     case WM_CHORD_SIGNAL:
-        KillTimer(hwnd, CHORD_TIMER_ID);
-        SetTimer(hwnd, CHORD_TIMER_ID, CHORD_THRESHOLD_MS, NULL);
+        if (!g_learning) {
+            KillTimer(hwnd, CHORD_TIMER_ID);
+            SetTimer(hwnd, CHORD_TIMER_ID, CHORD_THRESHOLD_MS, NULL);
+        }
         break;
+
+    case WM_LEARN_MIDI_SIGNAL:
+    {
+        int type = (int)wParam;
+        int num = (int)lParam;
+        std::lock_guard<std::mutex> lock(g_learnMutex);
+        if (g_learning && g_learn_pending.midi_type == -1) {
+            // Grace period: ignore events too close to start
+            if (GetTickCount() - g_learnStartTime < 200) {
+                return 0;
+            }
+
+            g_learn_pending.midi_type = type;
+            g_learn_pending.midi_num = num;
+            
+            SendLog("Capture: MIDI " + std::string(type == 0 ? "Note " : "CC ") + std::to_string(num));
+            SendLog("Transitioning to Phase 2 (Keyboard Capture)");
+            
+            PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
+            SendStatus("Waiting for keyboard key...");
+
+            if (g_hKeyboardHook) UnhookWindowsHookEx(g_hKeyboardHook);
+            g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+        }
+    }
+    break;
     case WM_USER + 100: {
         int slot = (int)wParam;
         if (slot >= 0 && slot < (int)g_profileSlots.size()) {
@@ -1311,37 +1386,44 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && wParam == WM_KEYDOWN) {
         KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
-        if (g_learning && g_learn_pending.midi_type != -1) {
-            int vk = pKey->vkCode;
-            int mods = 0;
-            if (GetKeyState(VK_CONTROL) & 0x8000) mods |= 1;
-            if (GetKeyState(VK_SHIFT) & 0x8000) mods |= 2;
-            if (GetKeyState(VK_MENU) & 0x8000) mods |= 4;
+        
+        {
+            std::lock_guard<std::mutex> lock(g_learnMutex);
+            if (g_learning && g_learn_pending.midi_type != -1) {
+                int vk = pKey->vkCode;
+                int mods = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) mods |= 1;
+                if (GetKeyState(VK_SHIFT) & 0x8000) mods |= 2;
+                if (GetKeyState(VK_MENU) & 0x8000) mods |= 4;
 
-            g_learn_pending.key_vk = vk;
-            g_learn_pending.modifiers = mods;
+                SendLog("Capture: Keyboard VK " + std::to_string(vk) + " Mods " + std::to_string(mods));
+                
+                g_learn_pending.key_vk = vk;
+                g_learn_pending.modifiers = mods;
 
-            {
-                std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
-                g_mappings.push_back(g_learn_pending);
+                {
+                    std::lock_guard<std::recursive_mutex> mlock(g_mappingsMutex);
+                    g_mappings.push_back(g_learn_pending);
+                }
+
+                // Finish capture
+                HHOOK h = g_hKeyboardHook;
+                g_hKeyboardHook = NULL;
+                g_learning = false;
+                UnhookWindowsHookEx(h);
+
+                std::wstring displayStr = L"Mapped MIDI ";
+                displayStr += (g_learn_pending.midi_type == 0 ? L"Note" : L"CC");
+                displayStr += L" " + std::to_wstring(g_learn_pending.midi_num);
+                displayStr += L" -> " + GetModifierString(g_learn_pending.modifiers) + GetKeyName(g_learn_pending.key_vk);
+                
+                SendLog(WideToUtf8(displayStr));
+                SendMappingsToUI();
+                SendStatus("Mapped successfully.");
+                PostToWebView({ {"type", "learn_done"} });
+                
+                return 1;
             }
-
-            std::wstring displayStr = L"Mapped MIDI ";
-            displayStr += (g_learn_pending.midi_type == 0 ? L"Note" : L"CC");
-            displayStr += L" " + std::to_wstring(g_learn_pending.midi_num);
-            displayStr += L" -> " + GetModifierString(g_learn_pending.modifiers) + GetKeyName(g_learn_pending.key_vk);
-            
-            HHOOK h = g_hKeyboardHook;
-            g_hKeyboardHook = NULL;
-            g_learning = false;
-            UnhookWindowsHookEx(h);
-
-            SendLog(WideToUtf8(displayStr));
-            SendMappingsToUI();
-            SendStatus("Mapped successfully.");
-            PostToWebView({ {"type", "learn_done"} });
-            
-            return 1;
         }
     }
     return CallNextHookEx(NULL, nCode, wParam, lParam);

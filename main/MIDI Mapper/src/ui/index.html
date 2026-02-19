@@ -269,6 +269,7 @@
               <option value="4">Macro</option>
               <option value="5">AI Prompt</option>
               <option value="3">HUD Overlay</option>
+              <option value="2">Chord (Multi-Note)</option>
             </select>
           </div>
           <div id="editFieldKey">
@@ -277,6 +278,13 @@
             <input type="number" id="editKeyVk"
               style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
           </div>
+        </div>
+
+        <div id="editFieldChord" style="display:none;">
+          <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Chord MIDI Notes
+            (CSV)</label>
+          <input type="text" id="editMidiChord" placeholder="e.g. 60, 64, 67"
+            style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
         </div>
 
         <div id="editFieldGesture">
@@ -395,12 +403,18 @@
         card.className = 'mapping-card';
         card.onclick = () => openEditor(i);
 
-        let target = m.midi_type === 0 ? 'Key ' + m.key_vk : (m.midi_type === 4 ? 'Macro' : (m.midi_type === 5 ? 'AI' : 'HUD'));
+        let target = 'HUD';
+        if (m.midi_type === 0) target = 'Key ' + m.key_vk;
+        else if (m.midi_type === 4) target = 'Macro';
+        else if (m.midi_type === 5) target = 'AI';
+        else if (m.midi_type === 2) target = 'Chord Key ' + m.key_vk;
+
         let gesture = m.gesture_id === 1 ? 'DBL' : (m.gesture_id === 2 ? 'HLD' : 'TAP');
+        let titleLine = m.midi_type === 2 ? `Chord [${(m.midi_chord || []).join(',')}]` : `${m.midi_type === 1 ? 'CC' : 'Note'} ${m.midi_num}`;
 
         card.innerHTML = `
           <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <span style="font-weight:700; font-size:14px;">${m.midi_type === 2 ? 'Chord' : (m.midi_type === 1 ? 'CC' : 'Note')} ${m.midi_num}</span>
+            <span style="font-weight:700; font-size:14px;">${titleLine}</span>
             <div class="badge">${gesture}</div>
           </div>
           <div style="font-size:18px; font-weight:600; color:var(--accent);">${target}</div>
@@ -479,6 +493,7 @@
       document.getElementById('editGestureId').value = m.gesture_id || 0;
       document.getElementById('editMacroText').value = m.macro_text || '';
       document.getElementById('editAiPrompt').value = m.ai_prompt || '';
+      document.getElementById('editMidiChord').value = (m.midi_chord || []).join(', ');
       document.getElementById('editAppPattern').value = m.app_pattern || '';
       document.getElementById('editTitlePattern').value = m.title_pattern || '';
       toggleEditFields();
@@ -491,9 +506,13 @@
       document.getElementById('editFieldMacro').style.display = type == 4 ? 'block' : 'none';
       document.getElementById('editFieldAi').style.display = type == 5 ? 'block' : 'none';
       document.getElementById('editFieldKey').style.display = (type == 4 || type == 5) ? 'none' : 'block';
+      document.getElementById('editFieldChord').style.display = type == 2 ? 'block' : 'none';
     }
 
     function saveEdit() {
+      const chordStr = document.getElementById('editMidiChord').value;
+      const chordArr = chordStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+
       send('update_mapping', {
         index: activeIdx,
         midi_type: parseInt(document.getElementById('editMidiType').value),
@@ -501,6 +520,7 @@
         gesture_id: parseInt(document.getElementById('editGestureId').value),
         macro_text: document.getElementById('editMacroText').value,
         ai_prompt: document.getElementById('editAiPrompt').value,
+        midi_chord: chordArr,
         app_pattern: document.getElementById('editAppPattern').value,
         title_pattern: document.getElementById('editTitlePattern').value
       });
