@@ -95,9 +95,9 @@ struct Mapping {
 };
 
 std::vector<Mapping> g_mappings;
-std::mutex g_mappingsMutex;
+std::recursive_mutex g_mappingsMutex;
 bool g_learning = false;
-Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "" };
+Mapping g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "", 0 };
 
 // ── Per-App Profile ──
 std::map<std::wstring, std::wstring> g_appProfileBindings;
@@ -145,9 +145,13 @@ std::vector<std::wstring> g_profileSlots;
 // ── CC Hold State ──
 std::map<int, bool> g_ccHoldActive;
 
+// ── Hook State ──
+HHOOK g_hKeyboardHook = NULL;
+
 // ── Forward Declarations ──
 void SendMappingsToUI();
 void ResolveGesture(int midi_num, int gesture_id);
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
 
 // ══════════════════════════════════════════
 //  Utility Functions
@@ -220,7 +224,7 @@ void SendStatus(const std::string& text) {
 
 void SendMappingsToUI() {
     json arr = json::array();
-    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
         std::wstring targetDisplay;
         if (m.profile_switch >= 0) {
@@ -322,7 +326,7 @@ void SimulateText(const std::string& text) {
 void SaveMappings(const std::wstring& filename) {
     json j = json::array();
     {
-        std::lock_guard<std::mutex> lock(g_mappingsMutex);
+        std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
         for (const auto& m : g_mappings) {
             json item = {
                 {"midi_type", m.midi_type}, {"midi_num", m.midi_num},
@@ -349,7 +353,7 @@ void LoadMappings(const std::wstring& filename) {
     json j;
     try { f >> j; } catch (...) { return; }
     {
-        std::lock_guard<std::mutex> lock(g_mappingsMutex);
+        std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
         g_mappings.clear();
         for (const auto& it : j) {
             Mapping m = {};
@@ -493,7 +497,7 @@ void ProcessChord(const std::vector<int>& chord) {
     std::vector<int> sortedChord = chord;
     std::sort(sortedChord.begin(), sortedChord.end());
     
-    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     bool found = false;
 
     // 1. Try to find a specific chord mapping
@@ -576,20 +580,24 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
         if (isNoteOn) {
             g_learn_pending.midi_type = 0;
             g_learn_pending.midi_num = number;
-            PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
-            SendStatus("Waiting for keyboard key...");
         }
         else if (isCC) {
             g_learn_pending.midi_type = 1;
             g_learn_pending.midi_num = number;
+        }
+
+        if (g_learn_pending.midi_type != -1) {
             PostToWebView({ {"type", "learn_phase"}, {"phase", 2}, {"text", "Now press a keyboard key..."} });
             SendStatus("Waiting for keyboard key...");
+            if (!g_hKeyboardHook) {
+                g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+            }
         }
         return;
     }
 
     // Execute mappings
-    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
         // Context Stack Filtering (v4.2): Title + App
         if (!m.title_pattern.empty()) {
@@ -664,7 +672,7 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
 }
 
 void ResolveGesture(int midi_num, int gesture_id) {
-    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
         if (m.midi_num != midi_num) continue;
         if (m.gesture_id != gesture_id && m.gesture_id != 0) continue; // Match specific or "any"
@@ -864,13 +872,17 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "start_learn") {
         g_learning = true;
-        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "" };
+        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "", 0 };
         SendLog("Learning: Press a MIDI note or CC, then a keyboard key.");
         SendStatus("Waiting for MIDI input...");
     }
     else if (action == "cancel_learn") {
         g_learning = false;
-        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "" };
+        if (g_hKeyboardHook) {
+            UnhookWindowsHookEx(g_hKeyboardHook);
+            g_hKeyboardHook = NULL;
+        }
+        g_learn_pending = { -1, -1, {}, -1, 0, 1, 0, 0, -1, "", "", "", "", 0 };
         SendStatus("Learning cancelled.");
     }
     else if (action == "learn_key") {
@@ -885,7 +897,7 @@ void HandleWebMessage(const std::string& messageStr) {
             if (msg.value("altKey", false)) g_learn_pending.modifiers |= 4;
 
             {
-                std::lock_guard<std::mutex> lock(g_mappingsMutex);
+                std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
                 g_mappings.push_back(g_learn_pending);
             }
 
@@ -904,7 +916,7 @@ void HandleWebMessage(const std::string& messageStr) {
     else if (action == "delete_mapping") {
         int index = msg.value("index", -1);
         if (index >= 0) {
-            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
             if (index < (int)g_mappings.size()) {
                 g_mappings.erase(g_mappings.begin() + index);
             }
@@ -914,7 +926,7 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "clear_mappings") {
         {
-            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
             g_mappings.clear();
         }
         SendMappingsToUI();
@@ -923,7 +935,7 @@ void HandleWebMessage(const std::string& messageStr) {
     else if (action == "update_mapping") {
         int index = msg.value("index", -1);
         if (index >= 0) {
-            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
             if (index < (int)g_mappings.size()) {
                 Mapping& m = g_mappings[index];
                 m.midi_type = msg.value("midi_type", m.midi_type);
@@ -990,7 +1002,7 @@ void HandleWebMessage(const std::string& messageStr) {
     }
     else if (action == "add_mapping") {
         {
-            std::lock_guard<std::mutex> lock(g_mappingsMutex);
+            std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
             Mapping m = { 0, 0, {}, 0, 0, 1, 0, 0, -1, "", "", "", "", 0 };
             g_mappings.push_back(m);
         }
@@ -1127,6 +1139,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case WM_DESTROY:
+        if (g_hKeyboardHook) { UnhookWindowsHookEx(g_hKeyboardHook); g_hKeyboardHook = NULL; }
         SaveConfig();
         KillTimer(hwnd, RECONNECT_TIMER_ID);
         KillTimer(hwnd, PIANO_DECAY_TIMER);
@@ -1293,4 +1306,43 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 
     CoUninitialize();
     return 0;
+}
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && wParam == WM_KEYDOWN) {
+        KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
+        if (g_learning && g_learn_pending.midi_type != -1) {
+            int vk = pKey->vkCode;
+            int mods = 0;
+            if (GetKeyState(VK_CONTROL) & 0x8000) mods |= 1;
+            if (GetKeyState(VK_SHIFT) & 0x8000) mods |= 2;
+            if (GetKeyState(VK_MENU) & 0x8000) mods |= 4;
+
+            g_learn_pending.key_vk = vk;
+            g_learn_pending.modifiers = mods;
+
+            {
+                std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
+                g_mappings.push_back(g_learn_pending);
+            }
+
+            std::wstring displayStr = L"Mapped MIDI ";
+            displayStr += (g_learn_pending.midi_type == 0 ? L"Note" : L"CC");
+            displayStr += L" " + std::to_wstring(g_learn_pending.midi_num);
+            displayStr += L" -> " + GetModifierString(g_learn_pending.modifiers) + GetKeyName(g_learn_pending.key_vk);
+            
+            HHOOK h = g_hKeyboardHook;
+            g_hKeyboardHook = NULL;
+            g_learning = false;
+            UnhookWindowsHookEx(h);
+
+            SendLog(WideToUtf8(displayStr));
+            SendMappingsToUI();
+            SendStatus("Mapped successfully.");
+            PostToWebView({ {"type", "learn_done"} });
+            
+            return 1;
+        }
+    }
+    return CallNextHookEx(NULL, nCode, wParam, lParam);
 }

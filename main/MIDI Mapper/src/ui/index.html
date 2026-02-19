@@ -219,15 +219,32 @@
         </div>
         <div class="card">
           <h3 style="font-size:14px; margin-bottom:16px;">Core Engine</h3>
-          <div style="display:flex; flex-direction:column; gap:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="font-size:13px;">Velocity Zones</span>
-              <input type="checkbox" id="checkVelocity" onchange="updateSettings()">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <label style="font-size:11px; color:var(--text-secondary);">MIDI Input Device</label>
+            <div style="display:flex; gap:8px;">
+              <select id="selectMidiPort"
+                style="flex:1; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
+                <option>Scanning...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="toggleConnect()" id="btnConnect"
+                style="font-size:12px;">Connect</button>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="font-size:13px;">Minimize to Tray</span>
-              <input type="checkbox" id="checkTray" onchange="updateSettings()">
-            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+            <span style="font-size:13px;">Auto-reconnect</span>
+            <input type="checkbox" id="checkReconnect" onchange="updateSettings()">
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:13px;">App Switching (Context)</span>
+            <input type="checkbox" id="checkAppSwitch" onchange="updateSettings()">
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:13px;">Velocity Zones</span>
+            <input type="checkbox" id="checkVelocity" onchange="updateSettings()">
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:13px;">Minimize to Tray</span>
+            <input type="checkbox" id="checkTray" onchange="updateSettings()">
           </div>
         </div>
       </div>
@@ -311,8 +328,8 @@
   </div>
 
   <!-- Learn Overlay -->
-  <div id="learnOverlay"
-    style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); backdrop-filter:blur(20px); z-index:2000; align-items:center; justify-content:center; flex-direction:column; gap:20px;">
+  <div id="learnOverlay" tabindex="-1"
+    style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); backdrop-filter:blur(20px); z-index:2000; align-items:center; justify-content:center; flex-direction:column; gap:20px; outline:none;">
     <h1 id="learnPrompt" style="font-size:32px; font-weight:800;">Waiting for MIDI...</h1>
     <p style="color:var(--text-secondary);">Strike a note or move a fader on your device</p>
     <button class="btn btn-secondary" onclick="cancelLearn()">Cancel</button>
@@ -320,7 +337,9 @@
 
   <script>
     // --- State & Core ---
-    // Piano Roll State Removed
+    let mappings = [];
+    let currentView = 'mappings';
+    let learnPhase = 0; // 0: Idle, 1: Waiting for MIDI, 2: Waiting for Key
 
     // --- Bridge ---
     function send(action, data = {}) {
@@ -335,10 +354,18 @@
           case 'midi_note': addLog(`Note ${msg.note}`, 'midi-note'); break;
           case 'status': setStatus(msg.text); break;
           case 'app_changed': updateContext(msg.app, msg.title); break;
-          case 'learn_phase': document.getElementById('learnPrompt').textContent = msg.text; break;
-          case 'learn_done': document.getElementById('learnOverlay').style.display = 'none'; break;
+          case 'learn_phase':
+            learnPhase = msg.phase;
+            document.getElementById('learnPrompt').textContent = msg.text;
+            break;
+          case 'learn_done':
+            learnPhase = 0;
+            document.getElementById('learnOverlay').style.display = 'none';
+            break;
           case 'log': addLog(msg.text, msg.category); break;
           case 'run_ai': handleAiRequest(msg.prompt); break;
+          case 'ports': updatePorts(msg.ports, msg.selected); break;
+          case 'config': syncConfig(msg.config); break;
         }
       });
     }
@@ -414,7 +441,30 @@
 
     function setStatus(text) {
       document.getElementById('statusLabel').textContent = text;
-      document.getElementById('statusDot').style.background = text.includes('Connected') ? 'var(--success)' : 'var(--error)';
+      document.getElementById('statusDot').style.background = (text.includes('Connected') || text.includes('Ready')) ? 'var(--success)' : 'var(--error)';
+      const btn = document.getElementById('btnConnect');
+      if (btn) btn.textContent = text.includes('Connected') ? 'Disconnect' : 'Connect';
+    }
+
+    function updatePorts(ports, selectedIdx) {
+      const sel = document.getElementById('selectMidiPort');
+      sel.innerHTML = '';
+      ports.forEach((p, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = p;
+        if (i === selectedIdx) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function syncConfig(cfg) {
+      document.getElementById('checkReconnect').checked = cfg.auto_reconnect;
+      document.getElementById('checkAppSwitch').checked = cfg.app_switching;
+      document.getElementById('checkVelocity').checked = cfg.velocity_zones;
+      document.getElementById('checkTray').checked = cfg.minimize_to_tray;
+      document.getElementById('inputApiKey').value = cfg.ai_api_key || '';
+      document.getElementById('inputAiGlobal').value = cfg.ai_global_prompt || '';
     }
 
 
@@ -459,10 +509,12 @@
 
     // --- Actions ---
     function startLearn() {
+      learnPhase = 1;
       document.getElementById('learnOverlay').style.display = 'flex';
       send('start_learn');
     }
     function cancelLearn() {
+      learnPhase = 0;
       send('cancel_learn');
       document.getElementById('learnOverlay').style.display = 'none';
     }
@@ -471,17 +523,48 @@
     function loadProfile() { send('load_profile'); }
     function saveProfile() { send('save_profile'); }
     function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+    function toggleConnect() {
+      const port = parseInt(document.getElementById('selectMidiPort').value);
+      send('toggle_connect', { port });
+    }
+
     function updateSettings() {
-      send('update_settings', {
-        auto_reconnect: true,
+      send('update_config', {
+        auto_reconnect: document.getElementById('checkReconnect').checked,
+        app_switching: document.getElementById('checkAppSwitch').checked,
         minimize_to_tray: document.getElementById('checkTray').checked,
-        velocity_zones: document.getElementById('checkVelocity').checked
+        velocity_zones: document.getElementById('checkVelocity').checked,
+        ai_api_key: document.getElementById('inputApiKey').value,
+        ai_global_prompt: document.getElementById('inputAiGlobal').value
       });
     }
 
     async function handleAiRequest(prompt) {
-      // (Implementation remains same as previous but with v5.0 styling for logs)
+      const key = document.getElementById('inputApiKey').value;
+      const global = document.getElementById('inputAiGlobal').value;
+      if (!key) { addLog("AI Error: No API Key", "error"); return; }
+
+      addLog("AI Thinking...", "system");
+      try {
+        const fullPrompt = global.replace('{prompt}', prompt);
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify({
+            model: 'gpt-3.5-turbo',
+            messages: [{ role: 'user', content: fullPrompt }]
+          })
+        });
+        const json = await resp.json();
+        const result = json.choices[0].message.content.trim();
+        addLog("AI Action: " + result, "system");
+        send('simulate_text', { text: result });
+      } catch (err) {
+        addLog("AI Failed: " + err, "error");
+      }
     }
+
+    // Keyboard Capture handled by native C++ WndProc
 
     // Init
     send('init');
