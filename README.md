@@ -27,7 +27,7 @@ Getting started with MIDITypist is simple:
 *   **HUD Overlay**: Dedicated "Layer Keys" reveal a high-contrast HUD on your desktop, showing your active mapping palettes in real-time.
 
 ### 2.3 AI Assistant
-*   **AI Desktop Automation**: Integrated OpenAI support allows you to trigger GPT-3.5 powered prompts directly from your MIDI controller to perform complex text or system tasks.
+*   **AI Desktop Automation**: Integrated **Google Gemini** support allows you to trigger intelligent prompts directly from your MIDI controller to perform complex text or system tasks.
 
 ### 2.4 Workflow Automation
 *   **Context Awareness**: Automatically detects the active application (e.g., Photoshop, Ableton, Chrome) and swaps your MIDI profile to match.
