@@ -128,7 +128,11 @@ std::wstring g_lastProfilePath;
 
 // ── Piano Roll State ──
 int g_pianoVelocity[PIANO_TOTAL_KEYS] = { 0 };
+bool g_pianoPhysicalDown[PIANO_TOTAL_KEYS] = { false };
 int g_pianoCC[128] = { 0 };
+bool g_sustainActive = false;
+std::set<int> g_sustainedVKs;
+std::mutex g_sustainMutex;
 
 // ── Auto Reconnect & App Switching ──
 bool g_autoReconnect = true;
@@ -530,6 +534,10 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
         }
     }
 
+    // Track physical state
+    if (isNoteOn) g_pianoPhysicalDown[number] = true;
+    if (isNoteOff) g_pianoPhysicalDown[number] = false;
+
     // CC immediately if not learning
     if (isCC) {
         ProcessMIDIEvent(status & 0xF0, number, velocity);
@@ -543,7 +551,7 @@ void midiCallback(double, std::vector<unsigned char>* msg, void*) {
         PostMessage(g_hwndMain, WM_CHORD_SIGNAL, 0, 0);
     }
     
-    // Process Note Off immediately (CC is handled above if not learning)
+    // Process Note Off immediately
     if (isNoteOff) {
         ProcessMIDIEvent(status & 0xF0, number, velocity);
     }
@@ -642,6 +650,21 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     if (isCC && number >= 0 && number < 128) {
         g_pianoCC[number] = velocity;
         PostToWebView({ {"type", "midi_cc"}, {"cc", number}, {"value", velocity} });
+
+        // Global Sustain Pedal Support (CC 64)
+        if (number == 64) {
+            std::lock_guard<std::mutex> lock(g_sustainMutex);
+            if (velocity > 63) {
+                g_sustainActive = true;
+            } else {
+                g_sustainActive = false;
+                // Release all sustained keys that aren't physically held
+                for (int vk : g_sustainedVKs) {
+                    SendKeyInput(vk, false);
+                }
+                g_sustainedVKs.clear();
+            }
+        }
     }
 
     // Execute mappings
@@ -668,6 +691,10 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
 
         if (m.midi_type == 0 && number == m.midi_num && m.gesture_id == 0) {
             if (isNoteOn) {
+                // RAPID TAP FIX: Only trigger NoteOn if the physical key is still held!
+                // This prevents the "buffered press" from sticking after a fast release.
+                if (!g_pianoPhysicalDown[number]) continue;
+
                 if (velocity < m.vel_min) continue;
                 if (g_velocityZonesEnabled) {
                     if (m.vel_zone == 1 && velocity > 63) continue;
@@ -676,7 +703,14 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
                 SendKeyInput(m.key_vk, true, m.modifiers);
             }
             else if (isNoteOff) {
-                SendKeyInput(m.key_vk, false, m.modifiers);
+                std::lock_guard<std::mutex> lock(g_sustainMutex);
+                if (g_sustainActive) {
+                    // Sustain is active: Track the VK for release later
+                    g_sustainedVKs.insert(m.key_vk);
+                } else {
+                    // Normal release
+                    SendKeyInput(m.key_vk, false, m.modifiers);
+                }
             }
         }
 
