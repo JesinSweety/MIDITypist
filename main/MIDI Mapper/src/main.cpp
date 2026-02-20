@@ -59,8 +59,8 @@ using json = nlohmann::json;
 #define PIANO_DECAY_MS 50
 #define CHORD_TIMER_ID 504
 #define CHORD_THRESHOLD_MS 60 // Window to group notes into a chord
-#define WM_CHORD_SIGNAL (WM_USER + 1)
-#define WM_LEARN_MIDI_SIGNAL (WM_USER + 2)
+#define WM_CHORD_SIGNAL (WM_USER + 201)
+#define WM_LEARN_MIDI_SIGNAL (WM_USER + 202)
 #define GESTURE_TIMER_ID 505
 #define GESTURE_WINDOW_MS 300
 #define LONG_HOLD_MS 800
@@ -639,7 +639,7 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             continue;
         }
 
-        if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
+        if (m.midi_type == 0 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
             if (velocity < m.vel_min) continue;
             if (g_velocityZonesEnabled) {
                 if (m.vel_zone == 1 && velocity > 63) continue;
@@ -669,13 +669,13 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
         }
         
         // Macro Support (v4.1)
-        if (m.midi_type == 4 && isNoteOn && number == m.midi_num) {
+        if (m.midi_type == 4 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
             SimulateText(m.macro_text);
             SendLog("Macro triggered: " + std::to_string(m.macro_text.length()) + " chars");
         }
 
         // AI Support (v4.1)
-        if (m.midi_type == 5 && isNoteOn && number == m.midi_num) {
+        if (m.midi_type == 5 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
             PostToWebView({ {"type", "run_ai"}, {"prompt", m.ai_prompt} });
             SendLog("AI Prompt sent: " + m.ai_prompt);
             SendStatus("AI is thinking...");
@@ -696,9 +696,9 @@ void ResolveGesture(int midi_num, int gesture_id) {
     std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
         if (m.midi_num != midi_num) continue;
-        if (m.gesture_id != gesture_id && m.gesture_id != 0) continue; // Match specific or "any"
-        // If we specified a specific gesture, only fire if it matches
-        if (gesture_id != 0 && m.gesture_id != gesture_id) continue;
+        
+        // Exact gesture match, and ignore gesture 0 here because it's handled immediately in ProcessMIDIEvent
+        if (m.gesture_id != gesture_id || m.gesture_id == 0) continue;
 
         // Context check
         if (!m.title_pattern.empty()) {
