@@ -209,7 +209,7 @@
         <div class="card">
           <h3 style="font-size:14px; margin-bottom:16px;">AI Assistant</h3>
           <div style="display:flex; flex-direction:column; gap:12px;">
-            <label style="font-size:11px; color:var(--text-secondary);">OpenAI API Key</label>
+            <label style="font-size:11px; color:var(--text-secondary);">Gemini API Key</label>
             <input id="inputApiKey" type="password"
               style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
             <label style="font-size:11px; color:var(--text-secondary);">Prompt Template</label>
@@ -564,23 +564,45 @@
       const global = document.getElementById('inputAiGlobal').value;
       if (!key) { addLog("AI Error: No API Key", "error"); return; }
 
-      addLog("AI Thinking...", "system");
+      addLog("AI Thinking (Gemini Pro 3.0)...", "system");
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       try {
         const fullPrompt = global.replace('{prompt}', prompt);
-        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+
+        const resp = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
-            messages: [{ role: 'user', content: fullPrompt }]
+            contents: [{
+              parts: [{ text: fullPrompt }]
+            }]
           })
         });
+
+        clearTimeout(timeoutId);
+
+        if (!resp.ok) {
+          const errorJson = await resp.json().catch(() => ({}));
+          const errorMsg = errorJson.error?.message || `HTTP ${resp.status}`;
+          throw new Error(errorMsg);
+        }
+
         const json = await resp.json();
-        const result = json.choices[0].message.content.trim();
+        const result = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
         addLog("AI Action: " + result, "system");
         send('simulate_text', { text: result });
       } catch (err) {
-        addLog("AI Failed: " + err, "error");
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          addLog("AI Failed: Request timed out (15s)", "error");
+        } else {
+          addLog("AI Failed: " + err.message, "error");
+        }
       }
     }
 
