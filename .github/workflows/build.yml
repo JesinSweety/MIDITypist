@@ -23,4 +23,4 @@ jobs:
       run: nuget restore main/MidiMapper.sln
 
     - name: Build Solution
-      run: msbuild main/MidiMapper.sln /p:Configuration=Release /p:Platform=x64
+      run: msbuild main/MidiMapper.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
