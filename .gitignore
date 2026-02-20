@@ -16,6 +16,11 @@ x86/
 *.opensdf
 *.VC.db
 *.VC.opendb
+*.ncb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
 
 # Visual Studio 2015/2017/2019/2022 cache/options directory
 .vs/
@@ -28,7 +33,18 @@ main/.vs/
 config.json
 profile.json
 *.user
+*.bak
+*.tmp
+*.swp
+*.zip
+*.7z
 
 # NuGet
 packages/
 nuget.exe
+*.nupkg
+
+# Windows Image files
+Thumbs.db
+ehthumbs.db
+Desktop.ini

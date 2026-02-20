@@ -1,5 +1,8 @@
 # MIDITypist: Professional MIDI-to-Desktop Automation Engine (v1.0)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/SamuelJoseph23/MIDITypist)](https://github.com/SamuelJoseph23/MIDITypist/releases)
+
 MIDITypist is a high-performance Windows automation utility that translates musical MIDI data into system-level keyboard and mouse commands. By leveraging a hybrid C++/WebView2 architecture, it provides the low-latency response of a native MIDI engine with the high-fidelity design of a modern web frontend.
 
 ## 1. Installation
@@ -58,3 +61,17 @@ MIDITypist requires standard user permissions to inject input. It does not requi
 
 ---
 © 2026 Samuel Joseph S. Professional MIDI Automation.
+
+## 6. Contributing
+
+Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+
+Please see `CONTRIBUTING.md` for details on our code of conduct and the process for submitting pull requests to us.
+
+## 7. License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+## 8. Support
+
+If you find this project helpful, please give it a ⭐ on GitHub! For bugs and feature requests, please use the [Issue Tracker](https://github.com/SamuelJoseph23/MIDITypist/issues).
