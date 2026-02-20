@@ -1,62 +1,60 @@
-# MIDITypist: Professional MIDI-to-Desktop Automation Engine
+# MIDITypist: Professional MIDI-to-Desktop Automation Engine (v1.0)
 
 MIDITypist is a high-performance Windows automation utility that translates musical MIDI data into system-level keyboard and mouse commands. By leveraging a hybrid C++/WebView2 architecture, it provides the low-latency response of a native MIDI engine with the high-fidelity design of a modern web frontend.
 
-## 1. Technical Architecture
+## 1. Installation
 
-The application utilizes a dual-layer hybrid architecture:
+Getting started with MIDITypist is simple:
 
-### 1.1 Backend (C++/Win32)
-*   **MIDI Engine**: Built on the RtMidi library for real-time, low-latency MIDI message capture.
-*   **Automation Driver**: Utilizes the Win32 `SendInput` API for system-level injection of keystrokes and mouse events, bypassing application-level sandbox restrictions.
-*   **Message Bridge**: Implements a bidirectional JSON-based communication layer via Microsoft WebView2 to synchronize engine state with the UI.
-*   **Process Monitor**: Uses Win32 hooks (`SetWinEventHook`) to monitor foreground window changes for automatic profile switching.
+1.  **Download**: Head to the [Releases](https://github.com/SamuelJoseph23/MIDITypist/releases) page and download `MIDITypist_v1.0_Windows.zip`.
+2.  **Extract**: Unzip the folder to a location of your choice.
+3.  **Run**: Launch `MIDITypist.exe`.
+4.  **Connect**: Select your MIDI device in the settings and click **Connect**.
 
-### 1.2 Frontend (WebView2 / Chromium)
-*   **Modern Interface**: A glassmorphic UI inspired by macOS Sonoma, utilizing advanced CSS3 techniques like `backdrop-filter: blur()`.
-*   **Visualization**: Real-time SVG-based piano roll and system log for signal monitoring.
-*   **HUD Layer**: A transient, borderless overlay mode for showing active mapping palettes during live workflows.
+*Note: Microsoft Edge WebView2 Runtime is required (standard on most Windows 10/11 systems).*
 
 ## 2. Core Features
 
-### 2.1 Mapping Engine
+### 2.1 Advanced Mapping Engine
 *   **Note-to-Key**: Map individual MIDI notes to single keys or complex modifier combinations (Ctrl, Shift, Alt).
 *   **CC-to-Mouse**: Map continuous controllers (knobs/sliders) to mouse cursor movement, vertical scrolling, or proportional key-hold behaviors.
-*   **Velocity Sensitivity**: Define "Soft" and "Hard" velocity zones to trigger different actions on a single note strike.
+*   **Velocity Consistency**: Use "Velocity Zones" (Soft/Hard) to trigger different actions based on how hard you strike a key.
+*   **Macro Support**: Trigger long strings of text or sequence-based keyboard macros with a single MIDI event.
 
-### 2.2 Advanced Gesture Engine (v4.0)
-*   **Chord Detection**: A pulse-based collector groups rapid note strikes into "Chords" (e.g., C-E-G), allowing for significantly more mapping combinations.
-*   **Layer Keys (HUD)**: Specific MIDI buttons can be designated as "Layer Keys." Holding a Layer Key reveals a high-contrast HUD on the desktop, displaying all active mappings in that layer.
+### 2.2 Gesture & Chord Engine
+*   **Chord Detection**: Group rapid note strikes into "Chords" (e.g., C-E-G) to create hundreds of additional mapping combinations.
+*   **Multi-Gestures**: Assign different actions to **Single Tap**, **Double Tap**, and **Long Hold** on the same MIDI note.
+*   **HUD Overlay**: Dedicated "Layer Keys" reveal a high-contrast HUD on your desktop, showing your active mapping palettes in real-time.
 
-### 2.3 Workflow Automation
-*   **Per-App Auto-Switching**: Automatically detects the active application (e.g., Photoshop, VS Code, Ableton) and swaps the MIDI profile to match the user's current task.
-*   **System Tray Integration**: Designed to run seamlessly in the background with auto-reconnect support for MIDI devices.
+### 2.3 AI Assistant
+*   **AI Desktop Automation**: Integrated OpenAI support allows you to trigger GPT-3.5 powered prompts directly from your MIDI controller to perform complex text or system tasks.
 
-## 3. Project Structure
+### 2.4 Workflow Automation
+*   **Context Awareness**: Automatically detects the active application (e.g., Photoshop, Ableton, Chrome) and swaps your MIDI profile to match.
+*   **System Tray Integration**: Runs quietly in the background with auto-reconnect support for your hardware.
 
-*   `/main/MIDI Mapper/src/main.cpp`: Core C++ engine and WebView2 hosting logic.
-*   `/main/MIDI Mapper/src/ui/index.html`: Unified UI containing HTML, CSS, and JavaScript.
-*   `/main/x64/Debug/`: Default output directory for build artifacts and runtime configuration.
-*   `config.json`: Master configuration file for application settings and profile routing.
+## 3. Technical Architecture
 
-## 4. Build Requirements
+The application utilizes a dual-layer hybrid architecture:
 
-*   **Compiler**: Visual Studio 2022 (v143 toolset recommended).
-*   **SDKs**:
-    *   Windows 10/11 SDK.
-    *   Microsoft WebView2 SDK (via NuGet).
-    *   Microsoft Windows Implementation Library (WIL, via NuGet).
-*   **Runtime**: WebView2 Runtime (Included in modern Windows/Edge installations).
+### 3.1 Backend (C++/Win32)
+*   **MIDI Engine**: Low-latency real-time capture via the RtMidi library.
+*   **Input Driver**: Uses the Win32 `SendInput` API for system-level automation.
+*   **Capture Engine**: Utilizes Low-Level Keyboard Hooks (`WH_KEYBOARD_LL`) for reliable "Learning Mode" capture regardless of window focus.
 
-## 5. Configuration
+### 3.2 Frontend (WebView2 / Chromium)
+*   **Modern Interface**: A glassmorphic UI designed for high performance and visual clarity.
+*   **Real-time Monitoring**: System logs and signal visualizers provide instant feedback on MIDI and automation activity.
 
-Mappings are stored in JSON format with the following structure:
-*   `midi_type`: 0 (Note), 1 (CC), 2 (Chord), 3 (LayerKey).
-*   `midi_num`: MIDI note or CC number.
-*   `midi_chord`: Array of notes defining a chord gesture.
-*   `key_vk`: Virtual Key code for automation.
-*   `modifiers`: Bitmask for Ctrl(1), Shift(2), Alt(4).
+## 4. Build Requirements (For Developers)
 
-## 6. Security and Permissions
+*   **Compiler**: Visual Studio 2022.
+*   **SDKs**: Windows 10/11 SDK, Microsoft WebView2 SDK, and WIL (available via NuGet).
+*   **Dependencies**: RtMidi (included in source).
+
+## 5. Security and Permissions
 
 MIDITypist requires standard user permissions to inject input. It does not require Administrative privileges unless it needs to interact with other elevated applications.
+
+---
+© 2026 Samuel Joseph S. Professional MIDI Automation.
