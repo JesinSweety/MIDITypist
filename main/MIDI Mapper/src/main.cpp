@@ -262,29 +262,57 @@ void SendMappingsToUI() {
 //  Key Simulation (with modifiers)
 // ══════════════════════════════════════════
 
-void SimulateKeyCombo(int vk, int modifiers) {
+// ── Improved Key Simulation (Game Compatible) ──
+void SendKeyInput(int vk, bool down, int modifiers = 0) {
     std::vector<INPUT> inputs;
-    if (modifiers & 1) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_CONTROL; inputs.push_back(i); }
-    if (modifiers & 2) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_SHIFT; inputs.push_back(i); }
-    if (modifiers & 4) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_MENU; inputs.push_back(i); }
-    UINT sc = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
-    INPUT kd = {}; kd.type = INPUT_KEYBOARD; kd.ki.wScan = sc; kd.ki.dwFlags = KEYEVENTF_SCANCODE;
-    inputs.push_back(kd);
-    INPUT ku = kd; ku.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-    inputs.push_back(ku);
-    if (modifiers & 4) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_MENU; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
-    if (modifiers & 2) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_SHIFT; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
-    if (modifiers & 1) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = VK_CONTROL; i.ki.dwFlags = KEYEVENTF_KEYUP; inputs.push_back(i); }
-    SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT));
+    
+    // 1. Helper to create ScanCode INPUT
+    auto CreateInput = [](int virtualKey, bool isDown) {
+        INPUT input = {};
+        input.type = INPUT_KEYBOARD;
+        UINT sc = MapVirtualKey(virtualKey, MAPVK_VK_TO_VSC);
+        input.ki.wScan = (WORD)sc;
+        input.ki.dwFlags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
+        
+        // 2. Handle Extended Keys (Arrows, Numpad Enter, etc.)
+        if (virtualKey == VK_LEFT || virtualKey == VK_UP || virtualKey == VK_RIGHT || virtualKey == VK_DOWN ||
+            virtualKey == VK_PRIOR || virtualKey == VK_NEXT || virtualKey == VK_END || virtualKey == VK_HOME ||
+            virtualKey == VK_INSERT || virtualKey == VK_DELETE || virtualKey == VK_DIVIDE || virtualKey == VK_RMENU || 
+            virtualKey == VK_RCONTROL) {
+            input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        }
+        return input;
+    };
+
+    // 3. Press Modifiers (if down)
+    if (down && modifiers > 0) {
+        if (modifiers & 1) inputs.push_back(CreateInput(VK_CONTROL, true));
+        if (modifiers & 2) inputs.push_back(CreateInput(VK_SHIFT, true));
+        if (modifiers & 4) inputs.push_back(CreateInput(VK_MENU, true)); // Alt
+    }
+
+    // 4. Main Key
+    inputs.push_back(CreateInput(vk, down));
+
+    // 5. Release Modifiers (if up)
+    if (!down && modifiers > 0) {
+        if (modifiers & 4) inputs.push_back(CreateInput(VK_MENU, false));
+        if (modifiers & 2) inputs.push_back(CreateInput(VK_SHIFT, false));
+        if (modifiers & 1) inputs.push_back(CreateInput(VK_CONTROL, false));
+    }
+
+    if (!inputs.empty()) {
+        SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT));
+    }
+}
+
+void SimulateKeyCombo(int vk, int modifiers) {
+    SendKeyInput(vk, true, modifiers);
+    SendKeyInput(vk, false, modifiers);
 }
 
 void SimulateHoldKey(int vk, bool down) {
-    INPUT input = {};
-    input.type = INPUT_KEYBOARD;
-    UINT sc = MapVirtualKey(vk, MAPVK_VK_TO_VSC);
-    input.ki.wScan = sc;
-    input.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
-    SendInput(1, &input, sizeof(INPUT));
+    SendKeyInput(vk, down, 0); // Modifiers not used for simple CC-Hold tags
 }
 
 void SimulateMouseMove(int dx, int dy) {
@@ -609,7 +637,6 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             state.tapCount = 0;
             state.processingGesture = false;
             ResolveGesture(number, 2); // Long Hold
-            return;
         }
     }
     if (isCC && number >= 0 && number < 128) {
@@ -639,13 +666,18 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             continue;
         }
 
-        if (m.midi_type == 0 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
-            if (velocity < m.vel_min) continue;
-            if (g_velocityZonesEnabled) {
-                if (m.vel_zone == 1 && velocity > 63) continue;
-                if (m.vel_zone == 2 && velocity < 64) continue;
+        if (m.midi_type == 0 && number == m.midi_num && m.gesture_id == 0) {
+            if (isNoteOn) {
+                if (velocity < m.vel_min) continue;
+                if (g_velocityZonesEnabled) {
+                    if (m.vel_zone == 1 && velocity > 63) continue;
+                    if (m.vel_zone == 2 && velocity < 64) continue;
+                }
+                SendKeyInput(m.key_vk, true, m.modifiers);
             }
-            SimulateKeyCombo(m.key_vk, m.modifiers);
+            else if (isNoteOff) {
+                SendKeyInput(m.key_vk, false, m.modifiers);
+            }
         }
 
         if (m.midi_type == 1 && isCC && number == m.midi_num) {
