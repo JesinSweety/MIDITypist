@@ -530,6 +530,7 @@
     // --- Actions ---
     function startLearn() {
       learnPhase = 1;
+      document.getElementById('learnPrompt').textContent = "Waiting for MIDI...";
       document.getElementById('learnOverlay').style.display = 'flex';
       send('start_learn');
     }

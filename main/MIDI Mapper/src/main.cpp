@@ -984,6 +984,7 @@ void HandleWebMessage(const std::string& messageStr) {
 
         SendLog("Learning started: Waiting for MIDI...");
         SendStatus("Waiting for MIDI input...");
+        PostToWebView({ {"type", "learn_phase"}, {"phase", 1}, {"text", "Waiting for MIDI..."} });
     }
     else if (action == "cancel_learn") {
         std::lock_guard<std::mutex> lock(g_learnMutex);
