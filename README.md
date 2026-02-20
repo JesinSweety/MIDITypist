@@ -5,36 +5,42 @@
 
 MIDITypist is a high-performance Windows automation utility that translates musical MIDI data into system-level keyboard and mouse commands. By leveraging a hybrid C++/WebView2 architecture, it provides the low-latency response of a native MIDI engine with the high-fidelity design of a modern web frontend.
 
-## 1. Installation
+## 1. Installation & Requirements
+*   **OS**: Windows 10 or Windows 11 (x64)
+*   **Dependencies**: [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (usually pre-installed on Windows 11).
+*   **Hardware**: Any MIDI-compliant controller (USB or via Interface).
 
-Getting started with MIDITypist is simple:
-
-1.  **Download**: Head to the [Releases](https://github.com/SamuelJoseph23/MIDITypist/releases) page and download `MIDITypist_v1.0_Windows.zip`.
-2.  **Extract**: Unzip the folder to a location of your choice.
-3.  **Run**: Launch `MIDITypist.exe`.
-4.  **Connect**: Select your MIDI device in the settings and click **Connect**.
-
-*Note: Microsoft Edge WebView2 Runtime is required (standard on most Windows 10/11 systems).*
+**Quick Start**:
+1.  Download the [latest release](https://github.com/SamuelJoseph23/MIDITypist/releases).
+2.  Extract the zip folder.
+3.  Run `MIDITypist.exe`.
+4.  Select your MIDI device and click **Connect**.
 
 ## 2. Core Features
 
-### 2.1 Advanced Mapping Engine
-*   **Note-to-Key**: Map individual MIDI notes to single keys or complex modifier combinations (Ctrl, Shift, Alt).
-*   **CC-to-Mouse**: Map continuous controllers (knobs/sliders) to mouse cursor movement, vertical scrolling, or proportional key-hold behaviors.
-*   **Velocity Consistency**: Use "Velocity Zones" (Soft/Hard) to trigger different actions based on how hard you strike a key.
-*   **Macro Support**: Trigger long strings of text or sequence-based keyboard macros with a single MIDI event.
+### 2.1 Native MIDI Engine
+*   **Low-Latency C++ Processing**: Built on a high-performance C++ backend for millisecond-accurate MIDI-to-input translation.
+*   **Hardware Auto-Reconnect**: Intelligent background monitoring that automatically restores your device connection if it's transiently lost or replugged.
+*   **Universal MIDI Support**: Works with any standard MIDI controller (Keyboards, Launchpads, Mixers).
 
-### 2.2 Gesture & Chord Engine
-*   **Chord Detection**: Group rapid note strikes into "Chords" (e.g., C-E-G) to create hundreds of additional mapping combinations.
-*   **Multi-Gestures**: Assign different actions to **Single Tap**, **Double Tap**, and **Long Hold** on the same MIDI note.
-*   **HUD Overlay**: Dedicated "Layer Keys" reveal a high-contrast HUD on your desktop, showing your active mapping palettes in real-time.
+### 2.2 Intelligent Automation
+*   **Context-Aware Engine**: Automatically swaps MIDI profiles based on your active foreground application (e.g., Photoshop, Ableton, Chrome).
+*   **Profile Management**: Save and share your mapping sets as portable `.json` files. Use the **Export/Import** buttons to backup your workflows or share them with the community.
+*   **Native Learning Mode**: Uses a Low-Level Keyboard Hook (`WH_KEYBOARD_LL`) to capture mapping keys instantly without needing to focus the MIDITypist window.
 
-### 2.3 AI Assistant
+### 2.3 Gestures & Chords
+*   **Multi-Gesture Triggers**: Every MIDI note can perform 3 distinct actions: **Single Tap**, **Double Tap**, and **Long Hold**.
+*   **Chord Mapping**: Group rapid note strikes into a single automation trigger (perfect for power chords or DAW shortcuts).
+*   **Velocity Sensitivity**: Map different actions to light vs. hard strikes for dynamic control.
+
+### 2.4 AI Assistant (Powered by Gemini)
 *   **AI Desktop Automation**: Integrated **Google Gemini** support allows you to trigger intelligent prompts directly from your MIDI controller to perform complex text or system tasks.
+*   **Smart HUD Overlay**: Visualize active mapping palettes and AI responses with a high-contrast HUD.
 
-### 2.4 Workflow Automation
-*   **Context Awareness**: Automatically detects the active application (e.g., Photoshop, Ableton, Chrome) and swaps your MIDI profile to match.
-*   **System Tray Integration**: Runs quietly in the background with auto-reconnect support for your hardware.
+### 2.5 System Integration
+*   **Tray Operation**: Runs silently in the system tray with real-time status dots (Green = Connected, Red = Needs Attention).
+*   **Real-time Activity Log**: Monitor every MIDI signal and system event with a high-fidelity diagnostic log.
+*   **Zero Admin Required**: Injects input at the user level, requiring no administrative privileges for standard operation.
 
 ## 3. Technical Architecture
 
