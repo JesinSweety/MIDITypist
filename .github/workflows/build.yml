@@ -20,7 +20,7 @@ jobs:
       uses: NuGet/setup-nuget@v1
 
     - name: Restore NuGet packages
-      run: nuget restore main/MidiMapper.sln
+      run: nuget restore "main/MIDI Mapper/packages.config" -OutputDirectory "main/MIDI Mapper/packages"
 
     - name: Build Solution
       run: msbuild main/MidiMapper.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
