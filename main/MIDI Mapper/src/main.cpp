@@ -614,12 +614,11 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     bool isNoteOff = (type == 0x80) || ((type == 0x90) && velocity == 0);
     bool isCC = (type == 0xB0);
 
-    // Update Piano Roll
+    // Update Piano Roll and Gesture state
     if (isNoteOn && number >= 0 && number < 128) {
         g_pianoVelocity[number] = velocity;
         PostToWebView({ {"type", "midi_note"}, {"note", number}, {"velocity", velocity} });
         
-        // Gesture Tracking (v4.3)
         std::lock_guard<std::mutex> lock(g_gestureMutex);
         auto& state = g_keyStates[number];
         DWORD now = GetTickCount();
@@ -636,7 +635,6 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     else if (isNoteOff && number >= 0 && number < 128) {
         g_pianoVelocity[number] = 0;
         
-        // Handle Long Hold if window not closed
         std::lock_guard<std::mutex> lock(g_gestureMutex);
         auto& state = g_keyStates[number];
         DWORD duration = GetTickCount() - state.lastPressTime;
@@ -648,18 +646,22 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             ResolveGesture(number, 2); // Long Hold
         }
     }
+
+    int oldCCVal = -1;
     if (isCC && number >= 0 && number < 128) {
+        oldCCVal = g_pianoCC[number];
         g_pianoCC[number] = velocity;
         PostToWebView({ {"type", "midi_cc"}, {"cc", number}, {"value", velocity} });
 
         // Global Sustain Pedal Support (CC 64)
         if (number == 64) {
             std::lock_guard<std::mutex> lock(g_sustainMutex);
-            if (velocity > 63) {
+            if (velocity > 63 && !g_sustainActive) {
                 g_sustainActive = true;
-            } else {
+                SendLog("Sustain Pedal: ON", "mapping");
+            } else if (velocity <= 63 && g_sustainActive) {
                 g_sustainActive = false;
-                // Release all sustained keys that aren't physically held
+                SendLog("Sustain Pedal: OFF", "mapping");
                 for (int vk : g_sustainedVKs) {
                     SendKeyInput(vk, false);
                 }
@@ -668,10 +670,14 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
         }
     }
 
+    // CC edge detection flags
+    bool ccCrossedUp = (isCC && oldCCVal <= 63 && velocity > 63);
+    bool ccCrossedDown = (isCC && oldCCVal > 63 && velocity <= 63);
+
     // Execute mappings
     std::lock_guard<std::recursive_mutex> lock(g_mappingsMutex);
     for (const auto& m : g_mappings) {
-        // Context Stack Filtering (v4.2): Title + App
+        // Context filtering
         if (!m.title_pattern.empty()) {
             std::string currentTitle = WideToUtf8(g_currentWindowTitle);
             if (currentTitle.find(m.title_pattern) == std::string::npos) continue;
@@ -681,6 +687,7 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             if (currentApp.find(m.app_pattern) == std::string::npos) continue;
         }
 
+        // Profile switching
         if (m.profile_switch >= 0) {
             if (m.midi_type == 0 && isNoteOn && number == m.midi_num) {
                 if (m.profile_switch < (int)g_profileSlots.size()) {
@@ -690,71 +697,69 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
             continue;
         }
 
+        // Note-to-Key Mapping
         if (m.midi_type == 0 && number == m.midi_num && m.gesture_id == 0) {
             if (isNoteOn) {
-                // RAPID TAP FIX: Only trigger NoteOn if the physical key is still held!
-                // This prevents the "buffered press" from sticking after a fast release.
-                if (!g_pianoPhysicalDown[number]) continue;
-
+                if (!g_pianoPhysicalDown[number]) continue; // Rapid tap safety
                 if (velocity < m.vel_min) continue;
                 if (g_velocityZonesEnabled) {
                     if (m.vel_zone == 1 && velocity > 63) continue;
                     if (m.vel_zone == 2 && velocity < 64) continue;
                 }
                 SendKeyInput(m.key_vk, true, m.modifiers);
+                SendLog("Note " + std::to_string(number) + " -> Key Down: " + std::to_string(m.key_vk), "mapping");
             }
             else if (isNoteOff) {
                 std::lock_guard<std::mutex> lock(g_sustainMutex);
                 if (g_sustainActive) {
-                    // Sustain is active: Track the VK for release later
                     g_sustainedVKs.insert(m.key_vk);
+                    SendLog("Note " + std::to_string(number) + " -> Sustaining VK " + std::to_string(m.key_vk), "mapping");
                 } else {
-                    // Normal release
                     SendKeyInput(m.key_vk, false, m.modifiers);
+                    SendLog("Note " + std::to_string(number) + " -> Key Up: " + std::to_string(m.key_vk), "mapping");
                 }
             }
         }
 
+        // CC-to-Action Mapping (Edge Detected)
         if (m.midi_type == 1 && isCC && number == m.midi_num) {
-            int val = velocity;
             switch (m.cc_action) {
-            case 0: SimulateKeyCombo(m.key_vk, m.modifiers); break;
-            case 1: SimulateMouseMove((val - 64) * 2, 0); break;
-            case 2: SimulateMouseMove(0, (val - 64) * 2); break;
-            case 3: SimulateScroll((val - 64) * 20); break;
-            case 4:
-                if (val > 63 && !g_ccHoldActive[m.midi_num]) {
-                    SimulateHoldKey(m.key_vk, true);
+            case 0: // Keypress (Now Momentary by default for games)
+                if (ccCrossedUp) {
+                    SendKeyInput(m.key_vk, true, m.modifiers);
+                    SendLog("CC " + std::to_string(number) + " -> Key Down: " + std::to_string(m.key_vk), "mapping");
+                } else if (ccCrossedDown) {
+                    SendKeyInput(m.key_vk, false, m.modifiers);
+                    SendLog("CC " + std::to_string(number) + " -> Key Up: " + std::to_string(m.key_vk), "mapping");
+                }
+                break;
+            case 1: SimulateMouseMove((velocity - 64) * 2, 0); break;
+            case 2: SimulateMouseMove(0, (velocity - 64) * 2); break;
+            case 3: SimulateScroll((velocity - 64) * 20); break;
+            case 4: // Hold Key (Dedicated toggle behavior or held state)
+                if (ccCrossedUp && !g_ccHoldActive[m.midi_num]) {
+                    SendKeyInput(m.key_vk, true);
                     g_ccHoldActive[m.midi_num] = true;
                 }
-                else if (val <= 63 && g_ccHoldActive[m.midi_num]) {
-                    SimulateHoldKey(m.key_vk, false);
+                else if (ccCrossedDown && g_ccHoldActive[m.midi_num]) {
+                    SendKeyInput(m.key_vk, false);
                     g_ccHoldActive[m.midi_num] = false;
                 }
                 break;
             }
         }
         
-        // Macro Support (v4.1)
+        // Macros, AI, HUD
         if (m.midi_type == 4 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
             SimulateText(m.macro_text);
-            SendLog("Macro triggered: " + std::to_string(m.macro_text.length()) + " chars");
         }
-
-        // AI Support (v4.1)
         if (m.midi_type == 5 && isNoteOn && number == m.midi_num && m.gesture_id == 0) {
             PostToWebView({ {"type", "run_ai"}, {"prompt", m.ai_prompt} });
             SendLog("AI Prompt sent: " + m.ai_prompt);
-            SendStatus("AI is thinking...");
         }
-
-        // HUD / Layer Key support
         if (m.midi_type == 3 && number == m.midi_num) {
-            if (isNoteOn) {
-                PostToWebView({ {"type", "hud"}, {"active", true}, {"title", WideToUtf8(GetModifierString(m.modifiers) + GetKeyName(m.key_vk))} });
-            } else if (isNoteOff) {
-                PostToWebView({ {"type", "hud"}, {"active", false} });
-            }
+            if (isNoteOn) PostToWebView({ {"type", "hud"}, {"active", true}, {"title", WideToUtf8(GetModifierString(m.modifiers) + GetKeyName(m.key_vk))} });
+            else if (isNoteOff) PostToWebView({ {"type", "hud"}, {"active", false} });
         }
     }
 }
