@@ -14,7 +14,7 @@
   --font-mono: 'JetBrains Mono', monospace;
 
   /* --- Dark Theme (Default) --- */
-  --bg-app: #b81b38;
+  --bg-app: #000000;
   --bg-sidebar: rgba(18, 18, 20, 0.85);
   /* Glassy */
   --bg-card: rgba(255, 255, 255, 0.04);
