@@ -95,34 +95,40 @@
 
   <!-- Sidebar -->
   <aside class="sidebar">
-    <div
-      style="display:flex; align-items:center; gap:12px; margin-bottom:40px; padding:0 12px; -webkit-app-region: no-drag;">
-      <img src="app_icon.ico" style="width:36px; height:36px; border-radius:8px; object-fit:contain;">
-      <h1 style="font-size:18px; font-weight:800; letter-spacing:-0.5px;">MIDITYPIST</h1>
+    <div class="brand"
+      style="display:flex; align-items:center; gap:16px; margin-bottom:48px; padding:0 12px; -webkit-app-region: no-drag;">
+      <div class="logo-box" style="width:40px; height:40px; display:flex; align-items:center; justify-content:center;">
+        <img src="app_icon.ico" style="width:32px; height:32px; border-radius:4px; object-fit:contain;">
+      </div>
+      <h1
+        style="font-size:20px; font-weight:800; letter-spacing:-0.5px; background:linear-gradient(to bottom, #FFF, #AAA); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;">
+        MIDITYPIST</h1>
     </div>
 
-    <nav style="display:flex; flex-direction:column; gap:4px; flex:1;">
+    <nav style="display:flex; flex-direction:column; gap:8px; flex:1;">
       <div class="nav-item active" onclick="setView('mappings')">
-        <svg class="icon-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7"></rect>
-          <rect x="14" y="3" width="7" height="7"></rect>
-          <rect x="14" y="14" width="7" height="14"></rect>
-          <rect x="3" y="14" width="7" height="7"></rect>
+        <svg class="icon-box" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+          stroke-width="2.5">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
         </svg>
         Mappings
       </div>
       <div class="nav-item" onclick="setView('logs')">
-        <svg class="icon-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="icon-box" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+          stroke-width="2.5">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14 2 14 8 20 8"></polyline>
           <line x1="16" y1="13" x2="8" y2="13"></line>
           <line x1="16" y1="17" x2="8" y2="17"></line>
-          <polyline points="10 9 9 9 8 9"></polyline>
         </svg>
         Activity Log
       </div>
       <div class="nav-item" onclick="setView('settings')">
-        <svg class="icon-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="icon-box" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+          stroke-width="2.5">
           <circle cx="12" cy="12" r="3"></circle>
           <path
             d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
@@ -132,10 +138,11 @@
       </div>
     </nav>
 
-    <div style="padding:12px; display:flex; flex-direction:column; gap:8px;">
-      <button class="btn btn-secondary" style="width:100%;" onclick="toggleTheme()">
-        <svg class="icon-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          style="margin-right:8px;">
+    <div style="padding:12px; display:flex; flex-direction:column; gap:12px;">
+      <button class="btn btn-secondary" style="width:100%; justify-content:flex-start; height:44px;"
+        onclick="toggleTheme()">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"
+          style="margin-right:12px;">
           <circle cx="12" cy="12" r="5"></circle>
           <line x1="12" y1="1" x2="12" y2="3"></line>
           <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -146,108 +153,194 @@
           <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
           <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
         </svg>
-        Theme
+        Interface Appearance
       </button>
-      <div id="statusIndicator"
-        style="display:flex; align-items:center; gap:8px; padding:8px 12px; font-size:11px; color:var(--text-tertiary);">
-        <div id="statusDot" style="width:6px; height:6px; border-radius:50%; background:var(--error);"></div>
-        <span id="statusLabel">Disconnected</span>
+      <div id="statusIndicator" class="card"
+        style="padding:12px; display:flex; align-items:center; gap:12px; border-radius:var(--radius-md);">
+        <div id="statusDot"
+          style="width:8px; height:8px; border-radius:50%; background:var(--error); box-shadow:0 0 8px var(--error);">
+        </div>
+        <div style="flex:1;">
+          <div
+            style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase; letter-spacing:0.5px; font-weight:700;">
+            Engine Status</div>
+          <div id="statusLabel" style="font-size:12px; font-weight:600;">Disconnected</div>
+        </div>
       </div>
     </div>
   </aside>
 
   <!-- Main View -->
   <main class="main-view">
-    <!-- Header / Context Band -->
+    <!-- Stylized Context HUD -->
     <header
-      style="height:64px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 32px;">
-      <div id="activeContext"
-        style="display:flex; align-items:center; gap:12px; font-size:12px; font-weight:600; color:var(--text-secondary);">
-        <span id="contextApp" style="color:var(--accent);">Idle</span>
-        <span style="opacity:0.2;">/</span>
-        <span id="contextTitle" style="opacity:0.8;">No foreground window</span>
+      style="height:80px; display:flex; align-items:center; justify-content:space-between; padding:0 40px; border-bottom:1px solid var(--border);">
+      <div id="activeContext" class="hud-box" style="display:flex; align-items:center; gap:16px;">
+        <div class="hud-icon"
+          style="width:48px; height:48px; background:var(--bg-input); border:1px solid var(--border); border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+          <img src="app_icon.ico" style="width:32px; height:32px; object-fit:contain;">
+        </div>
+        <div>
+          <div
+            style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase; font-weight:800; letter-spacing:1px;">
+            Active Context</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span id="contextApp" style="font-size:16px; font-weight:700; color:var(--text-primary);">System Idle</span>
+            <span style="color:var(--text-tertiary);">|</span>
+            <span id="contextTitle"
+              style="font-size:14px; font-weight:500; color:var(--text-secondary); max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Waiting
+              for interaction...</span>
+          </div>
+        </div>
       </div>
-      <div style="display:flex; gap:8px;">
+      <div style="display:flex; gap:12px;">
         <button class="btn btn-primary" onclick="startLearn()">Capture Mapping</button>
-        <button class="btn btn-secondary" onclick="addMapping()">Manual +</button>
+        <button class="btn btn-secondary" onclick="addMapping()">Manual Entry</button>
       </div>
     </header>
 
-    <!-- Content Sections -->
-    <div id="view-mappings" class="view-section active">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
-        <h2 style="font-size:24px; font-weight:700;">Workspace</h2>
-        <div style="display:flex; gap:12px;">
-          <button class="btn btn-secondary" onclick="loadProfile()">Load</button>
-          <button class="btn btn-secondary" onclick="saveProfile()">Save</button>
-        </div>
-      </div>
-      <div id="mapGrid" class="mapping-grid" style="padding-bottom: 64px;">
-        <!-- Mapping Cards will be injected here -->
-      </div>
-    </div>
+    <!-- Content Area -->
+    <div style="flex:1; position:relative; overflow:hidden; display:flex; flex-direction:column;">
 
-    <div id="view-logs" class="view-section">
-      <h2 style="font-size:24px; font-weight:700; margin-bottom:24px;">Activity</h2>
-      <div class="card" style="flex:1; overflow:hidden; display:flex; flex-direction:column; padding:0;">
-        <div id="logBody"
-          style="flex:1; overflow-y:auto; padding:20px; font-family:monospace; font-size:12px; line-height:1.6;">
-          <div style="color:var(--text-tertiary);">Monitoring MIDI bus...</div>
-        </div>
-        <div
-          style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:11px; color:var(--text-tertiary);"><span id="logCount">0</span> events captured</span>
-          <button class="btn btn-secondary" style="padding:4px 10px; font-size:11px;"
-            onclick="clearLog()">Clear</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="view-settings" class="view-section">
-      <h2 style="font-size:24px; font-weight:700; margin-bottom:24px;">Preferences</h2>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
-        <div class="card">
-          <h3 style="font-size:14px; margin-bottom:16px;">AI Assistant</h3>
-          <div style="display:flex; flex-direction:column; gap:12px;">
-            <label style="font-size:11px; color:var(--text-secondary);">Gemini API Key</label>
-            <input id="inputApiKey" type="password"
-              style="width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
-            <label style="font-size:11px; color:var(--text-secondary);">Prompt Template</label>
-            <textarea id="inputAiGlobal"
-              style="width:100%; height:80px; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white; font-family:inherit;"></textarea>
+      <!-- Mappings View -->
+      <div id="view-mappings" class="view-section active">
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:32px;">
+          <div>
+            <h2 style="font-size:32px; font-weight:800; letter-spacing:-1px;">My Workspace</h2>
+            <p style="color:var(--text-tertiary); font-size:14px; font-weight:500;">Manage your MIDI-to-Keyboard
+              automation profiles</p>
+          </div>
+          <div style="display:flex; gap:12px;">
+            <button class="btn btn-secondary" onclick="loadProfile()"><svg viewBox="0 0 24 24" width="16" height="16"
+                fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>Import</button>
+            <button class="btn btn-secondary" onclick="saveProfile()"><svg viewBox="0 0 24 24" width="16" height="16"
+                fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>Export</button>
+            <button class="btn btn-secondary" style="color:var(--error);" onclick="clearMappings()"><svg
+                viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                style="margin-right:8px;">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>Clear All</button>
           </div>
         </div>
-        <div class="card">
-          <h3 style="font-size:14px; margin-bottom:16px;">Core Engine</h3>
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-size:11px; color:var(--text-secondary);">MIDI Input Device</label>
-            <div style="display:flex; gap:8px;">
-              <select id="selectMidiPort"
-                style="flex:1; padding:8px; background:var(--bg-input); border:1px solid var(--border); border-radius:6px; color:white;">
-                <option>Scanning...</option>
-              </select>
-              <button class="btn btn-secondary" onclick="toggleConnect()" id="btnConnect"
-                style="font-size:12px;">Connect</button>
+        <div id="mapGrid" class="mapping-grid" style="padding-bottom: 40px;">
+          <!-- Mapping Cards -->
+        </div>
+      </div>
+
+      <!-- Logs View -->
+      <div id="view-logs" class="view-section">
+        <h2 style="font-size:32px; font-weight:800; letter-spacing:-1px; margin-bottom:8px;">Activity Stream</h2>
+        <p style="color:var(--text-tertiary); font-size:14px; margin-bottom:32px;">Real-time diagnostics and MIDI signal
+          monitoring</p>
+        <div class="card"
+          style="flex:1; overflow:hidden; display:flex; flex-direction:column; padding:0; background:rgba(0,0,0,0.2);">
+          <div id="logBody"
+            style="flex:1; overflow-y:auto; padding:24px; font-family:var(--font-mono); font-size:13px; line-height:1.7;">
+            <div style="color:var(--text-tertiary); opacity:0.5;">Waiting for engine initialization...</div>
+          </div>
+          <div
+            style="padding:16px 24px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02);">
+            <span style="font-size:12px; color:var(--text-tertiary); font-weight:600;"><span id="logCount"
+                style="color:var(--accent);">0</span> signals captured in this session</span>
+            <button class="btn btn-secondary" style="padding:6px 14px; font-size:12px;" onclick="clearLog()">Clear
+              Stream</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings View -->
+      <div id="view-settings" class="view-section">
+        <h2 style="font-size:32px; font-weight:800; letter-spacing:-1px; margin-bottom:8px;">Preferences</h2>
+        <p style="color:var(--text-tertiary); font-size:14px; margin-bottom:32px;">Configure core engine behavior and
+          third-party integrations</p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:32px;">
+          <div class="card" style="padding:28px;">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent)" stroke-width="2.5">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+              </svg>
+              <h3 style="font-size:18px; font-weight:700;">AI Intelligence</h3>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:20px;">
+              <div class="input-group">
+                <label
+                  style="display:block; font-size:12px; font-weight:800; color:var(--text-tertiary); text-transform:uppercase; margin-bottom:8px;">Gemini
+                  Flash API Key</label>
+                <input id="inputApiKey" type="password" style="width:100%; border-radius:10px;">
+              </div>
+              <div class="input-group">
+                <label
+                  style="display:block; font-size:12px; font-weight:800; color:var(--text-tertiary); text-transform:uppercase; margin-bottom:8px;">Prompt
+                  Architecture</label>
+                <textarea id="inputAiGlobal" style="width:100%; height:120px; border-radius:10px;"></textarea>
+                <p style="font-size:11px; color:var(--text-tertiary); margin-top:8px;">Use {prompt} to inject secondary
+                  triggers</p>
+              </div>
             </div>
           </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-            <span style="font-size:13px;">Auto-reconnect</span>
-            <input type="checkbox" id="checkReconnect" onchange="updateSettings()">
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-size:13px;">App Switching (Context)</span>
-            <input type="checkbox" id="checkAppSwitch" onchange="updateSettings()">
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-size:13px;">Velocity Zones</span>
-            <input type="checkbox" id="checkVelocity" onchange="updateSettings()">
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-size:13px;">Minimize to Tray</span>
-            <input type="checkbox" id="checkTray" onchange="updateSettings()">
+
+          <div class="card" style="padding:28px;">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent)" stroke-width="2.5">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+              <h3 style="font-size:18px; font-weight:700;">Engine Controller</h3>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <label
+                style="display:block; font-size:12px; font-weight:800; color:var(--text-tertiary); text-transform:uppercase;">Primary
+                Input Device</label>
+              <div style="display:flex; gap:12px;">
+                <select id="selectMidiPort" style="flex:1; border-radius:10px;"></select>
+                <button class="btn btn-primary" onclick="toggleConnect()" id="btnConnect"
+                  style="min-width:120px;">Connect</button>
+              </div>
+
+              <div style="margin-top:16px; display:flex; flex-direction:column; gap:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:14px; font-weight:600;">Hardware Auto-Reconnect</span>
+                  <label class="toggle"><input type="checkbox" id="checkReconnect" onchange="updateSettings()">
+                    <div class="toggle-slider"></div>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:14px; font-weight:600;">Dynamic App Switching</span>
+                  <label class="toggle"><input type="checkbox" id="checkAppSwitch" onchange="updateSettings()">
+                    <div class="toggle-slider"></div>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:14px; font-weight:600;">Velocity Sensitive Zones</span>
+                  <label class="toggle"><input type="checkbox" id="checkVelocity" onchange="updateSettings()">
+                    <div class="toggle-slider"></div>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:14px; font-weight:600;">Silent Tray Resident</span>
+                  <label class="toggle"><input type="checkbox" id="checkTray" onchange="updateSettings()">
+                    <div class="toggle-slider"></div>
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      <!-- Global Piano Dashboard -->
+      <footer id="pianoDashboard"
+        style="height:120px; border-top:1px solid var(--border); background:rgba(0,0,0,0.4); backdrop-filter:blur(20px); display:flex; padding:10px 40px; align-items:center; gap:4px; overflow:hidden;">
+        <!-- 128 keys will be injected here via app.js -->
+      </footer>
     </div>
   </main>
 
@@ -343,276 +436,7 @@
     <button class="btn btn-secondary" onclick="cancelLearn()">Cancel</button>
   </div>
 
-  <script>
-    // --- State & Core ---
-    let mappings = [];
-    let currentView = 'mappings';
-    let learnPhase = 0; // 0: Idle, 1: Waiting for MIDI, 2: Waiting for Key
-
-    // --- Bridge ---
-    function send(action, data = {}) {
-      if (window.chrome?.webview) window.chrome.webview.postMessage(JSON.stringify({ action, ...data }));
-    }
-
-    if (window.chrome?.webview) {
-      window.chrome.webview.addEventListener('message', e => {
-        const msg = e.data;
-        switch (msg.type) {
-          case 'mappings': updateMappings(msg.mappings); break;
-          case 'midi_note': addLog(`Note ${msg.note}`, 'midi-note'); break;
-          case 'status': setStatus(msg.text); break;
-          case 'app_changed': updateContext(msg.app, msg.title); break;
-          case 'learn_phase':
-            learnPhase = msg.phase;
-            document.getElementById('learnPrompt').textContent = msg.text;
-            break;
-          case 'learn_done':
-            learnPhase = 0;
-            document.getElementById('learnOverlay').style.display = 'none';
-            break;
-          case 'log': addLog(msg.text, msg.category); break;
-          case 'run_ai': handleAiRequest(msg.prompt); break;
-          case 'ports': updatePorts(msg.ports, msg.selected); break;
-          case 'config': syncConfig(msg.config); break;
-        }
-      });
-    }
-
-    // --- Logic ---
-    function setView(viewId) {
-      document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
-      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      document.getElementById('view-' + viewId).classList.add('active');
-      event.currentTarget.classList.add('active');
-      currentView = viewId;
-    }
-
-    function toggleTheme() {
-      const html = document.documentElement;
-      const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', theme);
-    }
-
-    function updateMappings(list) {
-      mappings = list;
-      const grid = document.getElementById('mapGrid');
-      grid.innerHTML = '';
-
-      mappings.forEach((m, i) => {
-        const card = document.createElement('div');
-        card.className = 'mapping-card';
-        card.onclick = () => openEditor(i);
-
-        let target = 'HUD';
-        if (m.midi_type === 0) target = 'Key ' + m.key_vk;
-        else if (m.midi_type === 4) target = 'Macro';
-        else if (m.midi_type === 5) target = 'AI';
-        else if (m.midi_type === 2) target = 'Chord Key ' + m.key_vk;
-
-        let gesture = m.gesture_id === 1 ? 'DBL' : (m.gesture_id === 2 ? 'HLD' : 'TAP');
-        let titleLine = m.midi_type === 2 ? `Chord [${(m.midi_chord || []).join(',')}]` : `${m.midi_type === 1 ? 'CC' : 'Note'} ${m.midi_num}`;
-
-        card.innerHTML = `
-          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <span style="font-weight:700; font-size:14px;">${titleLine}</span>
-            <div class="badge">${gesture}</div>
-          </div>
-          <div style="font-size:18px; font-weight:600; color:var(--accent);">${target}</div>
-          <div class="mapping-footer" style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-            <div class="badge-row">
-               ${m.app_pattern ? `<span class="context-pill">${m.app_pattern}</span>` : ''}
-            </div>
-            <button class="btn" style="padding:4px; color:var(--error);" onclick="event.stopPropagation(); deleteMapping(${i})">
-              <svg style="width:14px; height:14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-            </button>
-          </div>
-        `;
-        grid.appendChild(card);
-      });
-    }
-
-    function addLog(text, cat) {
-      const body = document.getElementById('logBody');
-      const div = document.createElement('div');
-      div.style.color = cat === 'error' ? 'var(--error)' : (cat === 'midi-note' ? 'var(--accent)' : 'var(--text-secondary)');
-      div.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-      body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
-      document.getElementById('logCount').textContent = body.children.length;
-    }
-
-    function updateContext(app, title) {
-      // Filter out meta-noise
-      if (title === "Task Switching") return;
-      if (app === "explorer.exe" && !title) return;
-
-      document.getElementById('contextApp').textContent = app || 'Desktop';
-      document.getElementById('contextTitle').textContent = title || 'Untitled';
-
-      // Log the change
-      addLog(`Context: ${app} | ${title}`, 'system');
-    }
-
-    function setStatus(text) {
-      document.getElementById('statusLabel').textContent = text;
-      document.getElementById('statusDot').style.background = (text.includes('Connected') || text.includes('Ready')) ? 'var(--success)' : 'var(--error)';
-      const btn = document.getElementById('btnConnect');
-      if (btn) btn.textContent = text.includes('Connected') ? 'Disconnect' : 'Connect';
-    }
-
-    function updatePorts(ports, selectedIdx) {
-      const sel = document.getElementById('selectMidiPort');
-      sel.innerHTML = '';
-      ports.forEach((p, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = p;
-        if (i === selectedIdx) opt.selected = true;
-        sel.appendChild(opt);
-      });
-    }
-
-    function syncConfig(cfg) {
-      document.getElementById('checkReconnect').checked = cfg.auto_reconnect;
-      document.getElementById('checkAppSwitch').checked = cfg.app_switching;
-      document.getElementById('checkVelocity').checked = cfg.velocity_zones;
-      document.getElementById('checkTray').checked = cfg.minimize_to_tray;
-      document.getElementById('inputApiKey').value = cfg.ai_api_key || '';
-      document.getElementById('inputAiGlobal').value = cfg.ai_global_prompt || '';
-    }
-
-
-    // --- Modal Logic ---
-    let activeIdx = -1;
-    function openEditor(i) {
-      activeIdx = i;
-      const m = mappings[i];
-      document.getElementById('modalEditor').style.display = 'flex';
-      document.getElementById('editMidiType').value = m.midi_type;
-      document.getElementById('editKeyVk').value = m.key_vk;
-      document.getElementById('editGestureId').value = m.gesture_id || 0;
-      document.getElementById('editMacroText').value = m.macro_text || '';
-      document.getElementById('editAiPrompt').value = m.ai_prompt || '';
-      document.getElementById('editMidiChord').value = (m.midi_chord || []).join(', ');
-      document.getElementById('editAppPattern').value = m.app_pattern || '';
-      document.getElementById('editTitlePattern').value = m.title_pattern || '';
-      toggleEditFields();
-    }
-
-    function closeEditor() { document.getElementById('modalEditor').style.display = 'none'; }
-
-    function toggleEditFields() {
-      const type = document.getElementById('editMidiType').value;
-      document.getElementById('editFieldMacro').style.display = type == 4 ? 'block' : 'none';
-      document.getElementById('editFieldAi').style.display = type == 5 ? 'block' : 'none';
-      document.getElementById('editFieldKey').style.display = (type == 4 || type == 5) ? 'none' : 'block';
-      document.getElementById('editFieldChord').style.display = type == 2 ? 'block' : 'none';
-    }
-
-    function saveEdit() {
-      const chordStr = document.getElementById('editMidiChord').value;
-      const chordArr = chordStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-
-      send('update_mapping', {
-        index: activeIdx,
-        midi_type: parseInt(document.getElementById('editMidiType').value),
-        key_vk: parseInt(document.getElementById('editKeyVk').value),
-        gesture_id: parseInt(document.getElementById('editGestureId').value),
-        macro_text: document.getElementById('editMacroText').value,
-        ai_prompt: document.getElementById('editAiPrompt').value,
-        midi_chord: chordArr,
-        app_pattern: document.getElementById('editAppPattern').value,
-        title_pattern: document.getElementById('editTitlePattern').value
-      });
-      closeEditor();
-    }
-
-    // --- Actions ---
-    function startLearn() {
-      learnPhase = 1;
-      document.getElementById('learnPrompt').textContent = "Waiting for MIDI...";
-      document.getElementById('learnOverlay').style.display = 'flex';
-      send('start_learn');
-    }
-    function cancelLearn() {
-      learnPhase = 0;
-      send('cancel_learn');
-      document.getElementById('learnOverlay').style.display = 'none';
-    }
-    function addMapping() { send('add_mapping'); }
-    function deleteMapping(i) { send('delete_mapping', { index: i }); }
-    function loadProfile() { send('load_profile'); }
-    function saveProfile() { send('save_profile'); }
-    function clearLog() { document.getElementById('logBody').innerHTML = ''; }
-    function toggleConnect() {
-      const port = parseInt(document.getElementById('selectMidiPort').value);
-      send('toggle_connect', { port });
-    }
-
-    function updateSettings() {
-      send('update_config', {
-        auto_reconnect: document.getElementById('checkReconnect').checked,
-        app_switching: document.getElementById('checkAppSwitch').checked,
-        minimize_to_tray: document.getElementById('checkTray').checked,
-        velocity_zones: document.getElementById('checkVelocity').checked,
-        ai_api_key: document.getElementById('inputApiKey').value,
-        ai_global_prompt: document.getElementById('inputAiGlobal').value
-      });
-    }
-
-    async function handleAiRequest(prompt) {
-      const key = document.getElementById('inputApiKey').value;
-      const global = document.getElementById('inputAiGlobal').value;
-      if (!key) { addLog("AI Error: No API Key", "error"); return; }
-
-      addLog("AI Thinking (Gemini Pro 3.0)...", "system");
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      try {
-        const fullPrompt = global.replace('{prompt}', prompt);
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
-
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [{
-              parts: [{ text: fullPrompt }]
-            }]
-          })
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!resp.ok) {
-          const errorJson = await resp.json().catch(() => ({}));
-          const errorMsg = errorJson.error?.message || `HTTP ${resp.status}`;
-          throw new Error(errorMsg);
-        }
-
-        const json = await resp.json();
-        const result = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        addLog("AI Action: " + result, "system");
-        send('simulate_text', { text: result });
-      } catch (err) {
-        clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-          addLog("AI Failed: Request timed out (15s)", "error");
-        } else {
-          addLog("AI Failed: " + err.message, "error");
-        }
-      }
-    }
-
-    // Keyboard Capture handled by native C++ WndProc
-
-    // Init
-    send('init');
-
-  </script>
+  <script src="app.js"></script>
 </body>
 
 </html>

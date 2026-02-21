@@ -14,6 +14,7 @@
 #include <memory>
 #include <algorithm>
 #include <functional>
+#include <queue>
 #include "RtMidi.h"
 
 // WebView2
@@ -62,6 +63,7 @@ using json = nlohmann::json;
 #define CHORD_THRESHOLD_MS 60 // Window to group notes into a chord
 #define WM_CHORD_SIGNAL (WM_USER + 201)
 #define WM_LEARN_MIDI_SIGNAL (WM_USER + 202)
+#define WM_UI_BRIDGE_SIGNAL (WM_USER + 203)
 #define GESTURE_TIMER_ID 505
 #define GESTURE_WINDOW_MS 300
 #define LONG_HOLD_MS 800
@@ -147,6 +149,10 @@ std::string g_aiGlobalPrompt = "You are a desktop automation assistant. Perform 
 std::vector<int> g_chordBuffer;
 std::mutex g_chordMutex;
 
+// ── UI Bridge Queue (Thread Safe) ──
+std::queue<json> g_uiMessageQueue;
+std::mutex g_uiMessageMutex;
+
 // ── Profile Slots for MIDI switching ──
 std::vector<std::wstring> g_profileSlots;
 
@@ -217,9 +223,11 @@ std::wstring GetConfigDir() {
 
 void PostToWebView(const json& msg) {
     if (!g_webview) return;
-    std::string s = msg.dump();
-    std::wstring ws = Utf8ToWide(s);
-    g_webview->PostWebMessageAsJson(ws.c_str());
+    {
+        std::lock_guard<std::mutex> lock(g_uiMessageMutex);
+        g_uiMessageQueue.push(msg);
+    }
+    if (g_hwndMain) PostMessage(g_hwndMain, WM_UI_BRIDGE_SIGNAL, 0, 0);
 }
 
 void SendLog(const std::string& text, const std::string& category = "system") {
@@ -634,6 +642,7 @@ void ProcessMIDIEvent(int type, int number, int velocity) {
     }
     else if (isNoteOff && number >= 0 && number < 128) {
         g_pianoVelocity[number] = 0;
+        PostToWebView({ {"type", "midi_note"}, {"note", number}, {"velocity", 0} });
         
         std::lock_guard<std::mutex> lock(g_gestureMutex);
         auto& state = g_keyStates[number];
@@ -1222,6 +1231,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!g_learning) {
             KillTimer(hwnd, CHORD_TIMER_ID);
             SetTimer(hwnd, CHORD_TIMER_ID, CHORD_THRESHOLD_MS, NULL);
+        }
+        break;
+
+    case WM_UI_BRIDGE_SIGNAL:
+        while (true) {
+            json msg;
+            {
+                std::lock_guard<std::mutex> lock(g_uiMessageMutex);
+                if (g_uiMessageQueue.empty()) break;
+                msg = g_uiMessageQueue.front();
+                g_uiMessageQueue.pop();
+            }
+            if (g_webview) {
+                std::string s = msg.dump();
+                std::wstring ws = Utf8ToWide(s);
+                g_webview->PostWebMessageAsJson(ws.c_str());
+            }
         }
         break;
 
